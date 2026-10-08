@@ -1,15 +1,18 @@
 <script setup>
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import AppSidebar from './components/ui/AppSidebar.vue'
-import HistorySidebar from './components/ui/HistorySidebar.vue'
 import RailFooter from './components/ui/RailFooter.vue'
 import ToastContainer from './components/ui/ToastContainer.vue'
+import StockConfirmationDialog from './components/movements/StockConfirmationDialog.vue'
+import { stockConfirmationRevision } from './composables/useStockConfirmation.js'
 import LoginModal from './components/ui/LoginModal.vue'
 import AppButton from './components/ui/AppButton.vue'
+import AppLink from './components/ui/AppLink.vue'
+import { routeHref, parseRoute, routeIdentity } from './utils/navigation.js'
 import AppDialog from './components/ui/AppDialog.vue'
 import AppModal from './components/ui/AppModal.vue'
 import DashboardView from './views/DashboardView.vue'
-import { useTheme } from './composables/useTheme.js'
+import { canUseLocalVisualStyles, useTheme } from './composables/useTheme.js'
 import { useItems } from './composables/useItems.js'
 import { useMovements } from './composables/useMovements.js'
 import { useLocations } from './composables/useLocations.js'
@@ -35,8 +38,9 @@ const OrdensServicoView = defineAsyncComponent(() => import('./views/OrdensServi
 const MotoresView = defineAsyncComponent(() => import('./views/MotoresView.vue'))
 const EpisTab = defineAsyncComponent(() => import('./components/cadastros/EpisTab.vue'))
 
-const { isDark, toggleTheme } = useTheme()
-const { items, variations, uniqueGroups, activeGroup, setActiveGroup, facets, hasActiveFilters, toggleFilter, clearFilters, loadData: loadItems } = useItems()
+const { isDark, toggleTheme, visualStyleName, cycleStyle } = useTheme()
+const canChangeVisualStyle = canUseLocalVisualStyles()
+const { items, variations, uniqueGroups, activeGroup, activeCategory, activeSubcategory, setActiveGroup, facets, hasActiveFilters, toggleFilter, clearFilters, loadData: loadItems } = useItems()
 const { loadData: loadMovements } = useMovements()
 const { loadData: loadLocations } = useLocations()
 const { destinations, getDestFullName, loadData: loadDestinations } = useDestinations()
@@ -50,6 +54,10 @@ const { workOrders, loadData: loadWorkOrders } = useWorkOrders()
 const { motors, loadData: loadMotors } = useMotors()
 const { loadData: loadClosings } = useClosings()
 const { success, error } = useToast()
+watch(stockConfirmationRevision, async () => {
+  try { await Promise.all([loadItems(), loadMovements()]) }
+  catch { error('Movimentação salva. Atualize a página para recarregar os saldos e o histórico.') }
+})
 const localBrandFavicon = '/local-brand/favicon.png'
 const localBrandName = ref('Estoque')
 const environmentBadge = ref(null)
@@ -63,7 +71,7 @@ const UI_STATE_KEY = 'estoque_ui_state_v1'
 
 function loadUiState() {
   try {
-    return JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+    return JSON.parse(sessionStorage.getItem(UI_STATE_KEY) || '{}')
   } catch {
     return {}
   }
@@ -71,7 +79,7 @@ function loadUiState() {
 
 function saveUiState(patch) {
   const current = loadUiState()
-  localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...current, ...patch }))
+  sessionStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...current, ...patch }))
 }
 
 function loadStoredList(key) {
@@ -92,7 +100,6 @@ const showLoginModal = ref(false)
 const mobileSidebarOpen = ref(false)
 const mobileSidebarTrigger = ref(null)
 const railOpen = ref(false)
-const expandedNavigationGroup = ref('')
 const catalogSidebarDismissed = ref(true)
 const catalogSearch = ref(savedUiState.catalogSearch || '')
 const catalogRef = ref(null)
@@ -106,8 +113,12 @@ const workOrderPreview = ref(null)
 const movBrowsing = ref(true)
 const movSubTab = ref(savedUiState.movSubTab || 'entrada')
 const requestedMovSubTab = ref(savedUiState.movSubTab || 'entrada')
-const requestedMovSearch = ref('')
+const requestedMovSearch = ref(null)
 const requestedMovementPrefill = ref(null)
+const requestedItemId = ref('')
+const requestedVariationId = ref('')
+let routeReady = false
+let applyingRoute = false
 const movRef = ref(null)
 const requestedCadastrosTab = ref(savedUiState.cadastrosTab || 'hierarquia')
 const globalCreateOpen = ref(false)
@@ -133,16 +144,12 @@ watch(mustChangePassword, required => {
 }, { immediate: true })
 
 const catalogSidebarAvailable = computed(() =>
-  activeTab.value === 'catalogo' || (activeTab.value === 'movimentacoes' && movBrowsing.value)
+  activeTab.value === 'catalogo'
 )
 const showCatalogSidebar = computed(() => catalogSidebarAvailable.value && !catalogSidebarDismissed.value)
-const showHistorySidebar = computed(() =>
-  activeTab.value === 'movimentacoes' && movSubTab.value === 'historico'
-)
-const anySidebar = computed(() => showCatalogSidebar.value || showHistorySidebar.value)
+const anySidebar = computed(() => showCatalogSidebar.value)
 const catalogSidebarDocked = computed(() => showCatalogSidebar.value)
-const historySidebarDocked = computed(() => showHistorySidebar.value && mobileSidebarOpen.value)
-const sidebarDocked = computed(() => catalogSidebarDocked.value || historySidebarDocked.value)
+const sidebarDocked = computed(() => catalogSidebarDocked.value)
 const sidebarOverlayOpen = computed(() => anySidebar.value && mobileSidebarOpen.value && !sidebarDocked.value)
 const navigationGroups = [
   { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }] },
@@ -153,7 +160,7 @@ const navigationGroups = [
     icon: 'M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9',
     tabs: [
       { id: 'catalogo', label: 'Consultar materiais' },
-      { id: 'inventario', label: 'Controle de estoque' },
+      { id: 'inventario', label: 'Controle de estoque', target: { tab: 'inventario', section: 'estoque' } },
     ],
   },
   {
@@ -326,6 +333,10 @@ onMounted(async () => {
   if (['cadastros', 'epis-admin'].includes(activeTab.value) && !isAdmin.value) activeTab.value = 'catalogo'
   await loadAllData()
   if (savedUiState.catalogGroup) activeGroup.value = savedUiState.catalogGroup
+  await applyLocationRoute()
+  routeReady = true
+  window.history.replaceState(null, '', routeHref(currentRoute.value))
+  window.addEventListener('hashchange', applyLocationRoute)
   window.addEventListener('app:data-invalidated', loadAllData)
   window.addEventListener('keydown', handleGlobalShortcutKeydown)
   window.addEventListener('mousedown', handleGlobalPointerDown, true)
@@ -336,6 +347,7 @@ onUnmounted(() => {
   window.removeEventListener('app:data-invalidated', loadAllData)
   window.removeEventListener('keydown', handleGlobalShortcutKeydown)
   window.removeEventListener('mousedown', handleGlobalPointerDown, true)
+  window.removeEventListener('hashchange', applyLocationRoute)
   clearShortcutPrefix()
 })
 
@@ -345,7 +357,15 @@ watch(user, (newUser, oldUser) => {
   if (!isAdmin.value && ['cadastros', 'epis-admin'].includes(activeTab.value)) activeTab.value = 'catalogo'
 })
 
+const scrollPositions = {}
+watch(activeTab, (_, previous) => { scrollPositions[previous] = window.scrollY }, { flush: 'sync' })
+watch(activeTab, async value => {
+  await nextTick()
+  requestAnimationFrame(() => window.scrollTo(0, scrollPositions[value] || 0))
+}, { flush: 'post' })
+
 watch(activeTab, value => {
+  loadAllData()
   railOpen.value = false
   if (value === 'catalogo' || value === 'movimentacoes') catalogSidebarDismissed.value = true
   saveUiState({ activeTab: value })
@@ -389,6 +409,8 @@ function toggleSidebar() {
 }
 
 function selectSidebarGroup(group) {
+  requestedItemId.value = ''
+  requestedVariationId.value = ''
   setActiveGroup(group)
 }
 
@@ -610,9 +632,6 @@ function selectMainTab(tabId) {
     else error('A administração é restrita a administradores.')
     return
   }
-  if (tabId === 'dashboard') {
-    loadAllData()
-  }
   activeTab.value = tabId
 }
 
@@ -620,11 +639,6 @@ function selectNavigationGroup(group) {
   if (!canAccessTarget(group)) {
     if (!isLoggedIn.value) showLoginModal.value = true
     else error('A administração é restrita a administradores.')
-    return
-  }
-  const hasSubItems = group.tabs.length > 1
-  if (hasSubItems) {
-    expandedNavigationGroup.value = expandedNavigationGroup.value === group.id ? '' : group.id
     return
   }
   if (group.target) {
@@ -646,11 +660,13 @@ function navigateTab(target) {
   const options = typeof target === 'string' ? {} : (target || {})
   const tab = typeof target === 'string' ? target : options.tab
   if (!tab) return
-  if (!canAccessTarget(options)) {
+  if (!canAccessTarget(options) || (['cadastros', 'epis-admin'].includes(tab) && !isAdmin.value)) {
     if (!isLoggedIn.value) showLoginModal.value = true
     else error('Seu perfil não tem permissão para esta ação.')
     return
   }
+  requestedItemId.value = options.itemId || ''
+  requestedVariationId.value = options.variationId || ''
   if ((tab === 'fechamentos' || options.section === 'fechamentos') && !isLoggedIn.value) {
     showLoginModal.value = true
     return
@@ -662,6 +678,7 @@ function navigateTab(target) {
   if (options.orderId) {
     const order = workOrders.value.find(item => item.id === options.orderId)
     if (order) {
+      activeTab.value = 'ordens'
       workOrderPreview.value = order
       return
     }
@@ -673,9 +690,14 @@ function navigateTab(target) {
     return
   }
   if (tab === 'inventario') {
-    const section = options.section || 'estoque'
-    const status = options.status ?? 'all'
-    const search = options.search || ''
+    const section = options.section || (applyingRoute ? 'estoque' : requestedInventorySection.value)
+    const status = options.status ?? (applyingRoute ? 'all' : requestedInventoryStatus.value)
+    const search = options.search ?? (applyingRoute ? '' : requestedInventorySearch.value)
+    if (!applyingRoute && !('search' in options) && !('status' in options)) {
+      requestedInventorySection.value = section
+      activeTab.value = 'inventario'
+      return
+    }
     requestedInventorySection.value = ''
     requestedInventoryStatus.value = '__pending__'
     requestedInventorySearch.value = ''
@@ -723,6 +745,40 @@ function navigateTab(target) {
     return
   }
   activeTab.value = tab
+}
+
+const currentRoute = computed(() => {
+  const route = { tab: activeTab.value }
+  if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value })
+  if (route.tab === 'inventario') Object.assign(route, { section: requestedInventorySection.value, status: requestedInventoryStatus.value, search: requestedInventorySearch.value, variationId: requestedVariationId.value })
+  if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '' })
+  if (route.tab === 'cadastros') route.subTab = requestedCadastrosTab.value
+  if (route.tab === 'ordens') Object.assign(route, { subTab: requestedOrdersTab.value, orderId: workOrderPreview.value?.id || requestedOrderFocusId.value })
+  return route
+})
+watch(currentRoute, route => {
+  if (!routeReady || applyingRoute || route.status === '__pending__' || (route.tab === 'inventario' && !route.section) || (route.tab === 'movimentacoes' && !route.subTab)) return
+  const href = routeHref(route)
+  if (href === window.location.hash) return
+  const method = routeIdentity(parseRoute(window.location.hash)) === routeIdentity(route) ? 'replaceState' : 'pushState'
+  window.history[method](null, '', href)
+})
+async function applyLocationRoute() {
+  const route = parseRoute(window.location.hash)
+  if (!route) return
+  applyingRoute = true
+  workOrderPreview.value = null
+  navigateTab(route)
+  if (route.tab === 'catalogo') {
+    catalogSearch.value = route.search || ''
+    activeGroup.value = route.group || null
+    activeCategory.value = route.category || null
+    activeSubcategory.value = route.subcategory || null
+  }
+  if (route.tab === 'movimentacoes' && !route.subTab) { requestedMovSubTab.value = 'historico'; movSubTab.value = 'historico' }
+  await nextTick()
+  await nextTick()
+  applyingRoute = false
 }
 
 function handleGlobalShortcutKeydown(event) {
@@ -774,6 +830,7 @@ function handleGlobalShortcutKeydown(event) {
 <template>
   <div class="ds-page" :class="{ 'has-docked-sidebar': sidebarDocked }">
     <!-- Catalog Sidebar -->
+    <Teleport to="#workspace-filters" defer>
     <AppSidebar
       v-if="showCatalogSidebar"
       id="mobile-side-panel"
@@ -786,6 +843,7 @@ function handleGlobalShortcutKeydown(event) {
       :facets="facets"
       :has-active-filters="hasActiveFilters"
       :search="catalogSearch"
+      :show-search="activeTab !== 'catalogo'"
       @close="closeCatalogSidebar"
       @select-group="selectSidebarGroup"
       @toggle-filter="(k, v) => toggleFilter(k, v)"
@@ -794,27 +852,7 @@ function handleGlobalShortcutKeydown(event) {
       @search-submit="catalogRef?.triggerSearchDrill?.()"
     />
 
-    <!-- History Sidebar -->
-    <HistorySidebar
-      v-if="showHistorySidebar && movRef"
-      id="mobile-side-panel"
-      :class="{ 'mobile-sidebar-open': mobileSidebarOpen, 'history-sidebar-docked': historySidebarDocked }"
-      :role="sidebarOverlayOpen ? 'dialog' : undefined"
-      :aria-modal="sidebarOverlayOpen ? 'true' : undefined"
-      aria-label="Filtros do histórico"
-      :facets="movRef.histFacets"
-      :has-active-filters="movRef.hasHistFilters"
-      :search="movRef.histSearch"
-      :date-from="movRef.histDateFrom"
-      :date-to="movRef.histDateTo"
-      @close="closeMobileSidebar()"
-      @toggle-filter="(k, v) => movRef.toggleHistFilter(k, v)"
-      @clear-filters="movRef.clearHistFilters()"
-      @update:search="v => movRef.histSearch = v"
-      @update:date-from="v => movRef.histDateFrom = v"
-      @update:date-to="v => movRef.histDateTo = v"
-    />
-
+    </Teleport>
     <button
       v-if="sidebarOverlayOpen"
       type="button"
@@ -850,42 +888,31 @@ function handleGlobalShortcutKeydown(event) {
 
       <nav class="ds-rail-nav ds-scrollbar">
         <template v-for="group in visibleNavigationGroups" :key="group.id">
-          <button
-            type="button"
+          <AppLink
+            :target="group.target || group.defaultTab"
             class="ds-rail-item"
             :class="activeNavigationGroup === group.id ? 'ds-rail-item-active' : ''"
             :title="group.requiresAdmin && !isAdmin ? 'Acesso restrito a administradores' : group.label"
-            :aria-expanded="group.tabs.length > 1 ? expandedNavigationGroup === group.id : undefined"
-            @click="selectNavigationGroup(group)"
+            @navigate="selectNavigationGroup(group)"
           >
             <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" :d="group.icon" />
             </svg>
             {{ group.label }}
-            <svg
-              v-if="group.tabs.length > 1"
-              class="ml-auto transition-transform duration-150 motion-reduce:transition-none"
-              :class="expandedNavigationGroup === group.id ? 'rotate-90' : ''"
-              aria-hidden="true"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
-          <div v-if="expandedNavigationGroup === group.id && group.tabs.length > 1" class="ds-rail-sub">
-            <button
-              v-for="tab in group.tabs"
-              :key="tab.id"
-              type="button"
-              class="ds-rail-item"
-              :class="isNavigationTabActive(group, tab) ? 'ds-rail-item-active' : ''"
-              @click="navigateTab(tab.target || tab.id)"
-            >
-              {{ tab.label }}
-            </button>
+          </AppLink>
+          <div v-if="group.tabs.length > 1">
+            <div class="ds-rail-sub">
+              <AppLink
+                v-for="tab in group.tabs"
+                :key="tab.id"
+                :target="tab.target || tab.id"
+                class="ds-rail-item"
+                :class="isNavigationTabActive(group, tab) ? 'ds-rail-item-active' : ''"
+                @navigate="navigateTab"
+              >
+                {{ tab.label }}
+              </AppLink>
+            </div>
           </div>
         </template>
       </nav>
@@ -901,9 +928,12 @@ function handleGlobalShortcutKeydown(event) {
       :is-logged-in="isLoggedIn"
       :user-name="user?.name || ''"
       :is-dark="isDark"
+      :can-change-visual-style="canChangeVisualStyle"
+      :visual-style-name="visualStyleName"
       @login="showLoginModal = true"
       @change-password="openPasswordModal"
       @logout="logoutFromMenu"
+      @toggle-visual-style="cycleStyle"
       @toggle-theme="toggleTheme"
     />
 
@@ -935,7 +965,7 @@ function handleGlobalShortcutKeydown(event) {
           </svg>
         </AppButton>
         <AppButton
-          v-if="catalogSidebarAvailable || showHistorySidebar"
+          v-if="catalogSidebarAvailable"
           ref="mobileSidebarTrigger"
           class="!w-9 !min-w-9 !h-9"
           variant="ghost"
@@ -961,7 +991,7 @@ function handleGlobalShortcutKeydown(event) {
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
             </svg>
-            <span class="hidden sm:inline">Buscar</span>
+            <span class="hidden sm:inline">Busca global</span>
           </AppButton>
           <div v-if="createActions.length" ref="globalCreateRootRef" class="relative">
             <AppButton
@@ -978,7 +1008,7 @@ function handleGlobalShortcutKeydown(event) {
             </AppButton>
             <div
               v-if="globalCreateOpen"
-              class="ds-menu absolute right-0 mt-2 w-72 p-2"
+              class="ds-menu ds-pop absolute right-0 mt-2 w-72 p-2"
             >
               <button
                 v-for="action in createActions"
@@ -1023,6 +1053,9 @@ function handleGlobalShortcutKeydown(event) {
           </AppButton>
         </div>
 
+        <div class="ds-workspace-layout" :class="{ 'ds-workspace-filtered': sidebarDocked }">
+        <div id="workspace-filters" v-show="sidebarDocked"></div>
+        <div class="min-w-0">
         <KeepAlive>
           <DashboardView v-if="activeTab === 'dashboard'" @go="navigateTab" />
         </KeepAlive>
@@ -1032,6 +1065,9 @@ function handleGlobalShortcutKeydown(event) {
           v-if="activeTab === 'catalogo'"
           ref="catalogRef"
           :search="catalogSearch"
+          :initial-item-id="requestedItemId"
+          :initial-variation-id="requestedVariationId"
+          @update:record="record => { requestedItemId = record.itemId || ''; requestedVariationId = record.variationId || '' }"
           @update:search="v => catalogSearch = v"
           @quick-movement="openContextQuickMovement"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
@@ -1049,11 +1085,14 @@ function handleGlobalShortcutKeydown(event) {
         <EpisTab v-if="activeTab === 'epis-admin' && isAdmin" />
 
         <!-- Inventário tab -->
+        <KeepAlive>
         <InventarioView
           v-if="activeTab === 'inventario'"
           :initial-section="requestedInventorySection"
           :initial-status="requestedInventoryStatus"
           :initial-search="requestedInventorySearch"
+          :initial-variation-id="requestedVariationId"
+          @update:variation="id => requestedVariationId = id"
           @update:section="v => requestedInventorySection = v"
           @update:status="v => requestedInventoryStatus = v"
           @update:search="v => requestedInventorySearch = v"
@@ -1061,6 +1100,7 @@ function handleGlobalShortcutKeydown(event) {
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
         />
 
+        </KeepAlive>
         <!-- Movimentações tab -->
         <MovimentacoesView
           v-if="activeTab === 'movimentacoes'"
@@ -1071,6 +1111,7 @@ function handleGlobalShortcutKeydown(event) {
           @update:browsing="v => movBrowsing = v"
           @update:sub-tab="v => { movSubTab = v; requestedMovSubTab = v }"
           @movement-complete="handleMovementComplete"
+          @navigate="navigateTab"
         />
 
         <!-- Ordens de Serviço tab -->
@@ -1084,6 +1125,8 @@ function handleGlobalShortcutKeydown(event) {
 
         <!-- Motores tab -->
         <MotoresView v-if="activeTab === 'motores'" />
+        </div>
+        </div>
       </main>
     </div>
 
@@ -1251,5 +1294,6 @@ function handleGlobalShortcutKeydown(event) {
 
     <!-- Toasts -->
     <ToastContainer />
+    <StockConfirmationDialog />
   </div>
 </template>

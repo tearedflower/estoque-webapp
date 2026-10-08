@@ -7,19 +7,22 @@ import { usePeople } from '../composables/usePeople.js'
 import { useSuppliers } from '../composables/useSuppliers.js'
 import { useWorkOrders } from '../composables/useWorkOrders.js'
 import { useToast } from '../composables/useToast.js'
-import { useMovementHistory } from '../composables/useMovementHistory.js'
+import { useMovementHistory, searchHistoryFacets } from '../composables/useMovementHistory.js'
 import { useDestinationSummary } from '../composables/useDestinationSummary.js'
 import { getRecentMovementDefaults } from '../services/api.js'
 import DestinationSummaryPanel from '../components/movements/DestinationSummaryPanel.vue'
 import PhotoMovementTab from '../components/movements/PhotoMovementTab.vue'
+import MovementImportTab from '../components/movements/MovementImportTab.vue'
 import DestinationTreePicker from '../components/ui/DestinationTreePicker.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import AppButton from '../components/ui/AppButton.vue'
+import AppLink from '../components/ui/AppLink.vue'
 import AppDialog from '../components/ui/AppDialog.vue'
 import AppModal from '../components/ui/AppModal.vue'
 import SectionTabs from '../components/ui/SectionTabs.vue'
-import { normalizeSearchText as normalizeText, searchTokens, matchesSearchTokens } from '../utils/globalSearch.js'
+import { normalizeSearchText as normalizeText } from '../utils/globalSearch.js'
 import { formatRecentDateTime } from '../utils/recentDateTime.js'
+import { buildMovementRows, filterMovementRows } from '../utils/movementPicker.js'
 
 const isAdmin = inject('isAdmin')
 const canOperate = inject('canOperate')
@@ -30,7 +33,7 @@ const props = defineProps({
   },
   initialHistorySearch: {
     type: String,
-    default: '',
+    default: null,
   },
   prefillMovement: {
     type: Object,
@@ -39,11 +42,11 @@ const props = defineProps({
 })
 
 const {
-  items, variations, getVariationsForItem, getTotalStock,
+  items, variations, getVariationsForItem,
   uniqueGroups, getCategoriesForGroup, getSubcategoriesForCategory,
   activeGroup, activeCategory, activeSubcategory,
   setActiveGroup, setActiveCategory, setActiveSubcategory,
-  navigationItems, setViewingItem
+  setViewingItem
 } = useItems()
 const { movements, addMovementBatch, editMovement, deleteMovement } = useMovements()
 const { destinations, activeDestinations, groupedDestinations, getDestinationName, getDestFullName } = useDestinations()
@@ -52,7 +55,7 @@ const { activeSuppliers, ensureSupplier } = useSuppliers()
 const { workOrders } = useWorkOrders()
 const { success, error } = useToast()
 
-const emit = defineEmits(['update:browsing', 'update:subTab', 'movement-complete'])
+const emit = defineEmits(['update:browsing', 'update:subTab', 'movement-complete', 'navigate'])
 
 function focusRef(target) {
   const el = Array.isArray(target?.value) ? target.value[0] : target?.value
@@ -61,7 +64,7 @@ function focusRef(target) {
 
 // ===== Sub-tabs =====
 const movementSubTabs = ['entrada', 'saida', 'rapida']
-const validSubTabs = [...movementSubTabs, 'fotos', 'historico', 'resumo']
+const validSubTabs = [...movementSubTabs, 'fotos', 'importacao', 'historico', 'resumo']
 const initialSubTab = props.initialSubTab === 'entradaRapida' || props.initialSubTab === 'saidaRapida' ? 'rapida' : props.initialSubTab
 const activeSubTab = ref(validSubTabs.includes(initialSubTab) ? initialSubTab : 'entrada')
 
@@ -71,14 +74,29 @@ const visibleSubTabs = computed(() => {
     { id: 'saida',     label: 'Saída',     icon: 'M12 19.5v-15m0 15-6-6m6 6 6-6' },
     { id: 'rapida',    label: 'Vários itens', icon: 'M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3' },
     { id: 'fotos',     label: 'Por foto', icon: 'M6.827 6.175 7.7 4.65A1.5 1.5 0 0 1 9.002 3.9h5.996a1.5 1.5 0 0 1 1.302.75l.873 1.525A1.5 1.5 0 0 0 18.475 6.9H19.5A1.5 1.5 0 0 1 21 8.4V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V8.4a1.5 1.5 0 0 1 1.5-1.5h1.025a1.5 1.5 0 0 0 1.302-.725Z M15.75 12.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z' },
+    { id: 'importacao', label: 'Importar planilha', icon: 'M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M7.5 10.5 12 15m0 0 4.5-4.5M12 15V3' },
     { id: 'historico', label: 'Histórico', icon: 'M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z' },
     { id: 'resumo',    label: 'Relatório por destino', icon: 'M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h16.5m0 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3M8.25 9.75l2.25 2.25 4.5-4.5' },
   ]
-  return canOperate.value ? all : all.filter(t => t.id === 'historico' || t.id === 'resumo')
+  const allowed = isAdmin.value ? all : all.filter(t => t.id !== 'importacao')
+  return canOperate.value ? allowed : allowed.filter(t => t.id === 'historico' || t.id === 'resumo')
 })
+
+const registrationTabs = computed(() => visibleSubTabs.value.filter(tab => !['historico', 'resumo'].includes(tab.id)))
+const lastRegistrationTab = ref('entrada')
+const isRegistering = computed(() => !['historico', 'resumo'].includes(activeSubTab.value))
+const mainTabs = computed(() => [
+  ...(canOperate.value ? [{ id: registrationTabs.value.some(tab => tab.id === lastRegistrationTab.value) ? lastRegistrationTab.value : 'entrada', label: 'Registrar' }] : []),
+  { id: 'historico', label: 'Histórico' },
+  { id: 'resumo', label: 'Relatórios' },
+])
+watch(activeSubTab, tab => {
+  if (!['historico', 'resumo'].includes(tab)) lastRegistrationTab.value = tab
+}, { immediate: true })
 
 // Force historico when visitor
 watch(canOperate, (v) => { if (!v && activeSubTab.value !== 'resumo') activeSubTab.value = 'historico' }, { immediate: true })
+watch(isAdmin, (v) => { if (!v && activeSubTab.value === 'importacao') activeSubTab.value = 'historico' }, { immediate: true })
 
 function switchSubTab(tab) {
   if (!validSubTabs.includes(tab) || activeSubTab.value === tab) return
@@ -106,6 +124,7 @@ function switchSubTab(tab) {
 
 // ===== Step flow (shared for Entrada + Saída) =====
 const step = ref(1) // 1: search item | 2: pick variation | 3: fill form
+const registrationStep = computed(() => step.value === 3 ? 2 : 1)
 const itemSearch = ref('')
 const selectedItem = ref(null)
 const selectedVariation = ref(null)
@@ -387,114 +406,26 @@ const navSubcategories = computed(() =>
     : []
 )
 
-function groupItemCount(g) { return items.value.filter(i => i.group === g).length }
-function groupStockTotal(g) {
-  const ids = new Set(items.value.filter(i => i.group === g).map(i => i.id))
-  return variations.value.filter(v => ids.has(v.itemId)).reduce((s, v) => s + v.stock, 0)
+// The same indexed catalog serves single-item and batch registration.
+const movementRows = computed(() => buildMovementRows(items.value, variations.value))
+const variationResults = computed(() => filterMovementRows(movementRows.value, itemSearch.value, {
+  group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value,
+}))
+const pickerPage = ref(1)
+const pickerPageSize = 30
+const pickerPages = computed(() => Math.max(1, Math.ceil(variationResults.value.length / pickerPageSize)))
+const pickerRows = computed(() => variationResults.value.slice((pickerPage.value - 1) * pickerPageSize, pickerPage.value * pickerPageSize))
+watch([itemSearch, activeGroup, activeCategory, activeSubcategory], () => { pickerPage.value = 1 })
+watch(pickerPages, pages => { pickerPage.value = Math.min(pickerPage.value, pages) })
+const quickExitResults = computed(() => quickExitSearch.value.trim()
+  ? filterMovementRows(movementRows.value, quickExitSearch.value).slice(0, 30) : [])
+const quickEntryResults = computed(() => quickEntrySearch.value.trim()
+  ? filterMovementRows(movementRows.value, quickEntrySearch.value).slice(0, 30) : [])
+
+function clearPickerFilters() {
+  itemSearch.value = ''
+  setActiveGroup(null)
 }
-function categoryItemCount(cat) { return items.value.filter(i => i.group === activeGroup.value && i.category === cat).length }
-function categoryStockTotal(cat) {
-  const ids = new Set(items.value.filter(i => i.group === activeGroup.value && i.category === cat).map(i => i.id))
-  return variations.value.filter(v => ids.has(v.itemId)).reduce((s, v) => s + v.stock, 0)
-}
-function subcategoryItemCount(sub) { return items.value.filter(i => i.group === activeGroup.value && i.category === activeCategory.value && i.subcategory === sub).length }
-function subcategoryStockTotal(sub) {
-  const ids = new Set(items.value.filter(i => i.group === activeGroup.value && i.category === activeCategory.value && i.subcategory === sub).map(i => i.id))
-  return variations.value.filter(v => ids.has(v.itemId)).reduce((s, v) => s + v.stock, 0)
-}
-
-// ===== Item search (step 1) =====
-const searchNorm = computed(() => normalizeText(itemSearch.value))
-
-function itemSearchText(item) {
-  return normalizeText([
-    item.name,
-    item.group,
-    item.category,
-    item.subcategory,
-    item.unit,
-    item.location,
-  ].filter(Boolean).join(' '))
-}
-
-function variationSearchText(item, variation) {
-  return normalizeText([
-    itemSearchText(item),
-    variation.location,
-    ...Object.values(variation.values || {}),
-    ...Object.entries(variation.values || {}).flatMap(([key, value]) => [key, value]),
-    ...Object.values(variation.extras || {}),
-    ...Object.entries(variation.extras || {}).flatMap(([key, value]) => [key, value]),
-  ].filter(Boolean).join(' '))
-}
-
-const variationResults = computed(() => {
-  const tokens = searchTokens(itemSearch.value)
-  if (!tokens.length) return []
-  const results = []
-  for (const item of items.value) {
-    for (const variation of getVariationsForItem(item.id)) {
-      if (matchesSearchTokens(variationSearchText(item, variation), tokens)) {
-        results.push({ item, variation })
-      }
-    }
-  }
-  return results
-    .sort((a, b) =>
-      a.item.name.localeCompare(b.item.name, 'pt-BR', { sensitivity: 'base', numeric: true }) ||
-      variationLabel(a.variation, a.item).localeCompare(variationLabel(b.variation, b.item), 'pt-BR', { sensitivity: 'base', numeric: true })
-    )
-    .slice(0, 50)
-})
-
-const quickExitResults = computed(() => {
-  const tokens = searchTokens(quickExitSearch.value)
-  if (!tokens.length) return []
-  const results = []
-  for (const item of items.value) {
-    for (const variation of getVariationsForItem(item.id)) {
-      if (matchesSearchTokens(variationSearchText(item, variation), tokens)) {
-        results.push({ item, variation })
-      }
-    }
-  }
-  return results
-    .sort((a, b) =>
-      a.item.name.localeCompare(b.item.name, 'pt-BR', { sensitivity: 'base', numeric: true }) ||
-      variationLabel(a.variation, a.item).localeCompare(variationLabel(b.variation, b.item), 'pt-BR', { sensitivity: 'base', numeric: true })
-    )
-    .slice(0, 30)
-})
-
-const quickEntryResults = computed(() => {
-  const tokens = searchTokens(quickEntrySearch.value)
-  if (!tokens.length) return []
-  const results = []
-  for (const item of items.value) {
-    for (const variation of getVariationsForItem(item.id)) {
-      if (matchesSearchTokens(variationSearchText(item, variation), tokens)) {
-        results.push({ item, variation })
-      }
-    }
-  }
-  return results
-    .sort((a, b) =>
-      a.item.name.localeCompare(b.item.name, 'pt-BR', { sensitivity: 'base', numeric: true }) ||
-      variationLabel(a.variation, a.item).localeCompare(variationLabel(b.variation, b.item), 'pt-BR', { sensitivity: 'base', numeric: true })
-    )
-    .slice(0, 30)
-})
-
-// When searching, search across all items; when browsing, use navigation
-const itemResults = computed(() => {
-  const tokens = searchTokens(itemSearch.value)
-  if (!tokens.length) return []
-  return items.value.filter(item => {
-    if (matchesSearchTokens(itemSearchText(item), tokens)) return true
-    const vars = getVariationsForItem(item.id)
-    return vars.some(v => matchesSearchTokens(variationSearchText(item, v), tokens))
-  }).slice(0, 50)
-})
 
 function selectItem(item) {
   selectedItem.value = item
@@ -502,57 +433,16 @@ function selectItem(item) {
 }
 
 function selectVariationResult(result) {
-  if (activeSubTab.value === 'saida' && result.variation.stock <= 0) {
+  if (activeSubTab.value === 'saida' && result.variation.stockConfirmed !== false && result.variation.stock <= 0) {
     error('Esta variacao esta sem estoque para saida.')
     return
   }
   selectedItem.value = result.item
-  itemSearch.value = ''
   selectVariation(result.variation)
 }
 
-function findSingleHierarchySearchMatch(q) {
-  const levels = [
-    { key: 'subcategory', fields: ['group', 'category', 'subcategory'] },
-    { key: 'category', fields: ['group', 'category'] },
-    { key: 'group', fields: ['group'] },
-  ]
-  for (const level of levels) {
-    const matches = items.value.filter(item => normalizeText(item[level.key]) === q)
-    const paths = new Map()
-    for (const item of matches) {
-      const path = {
-        group: item.group || '',
-        category: level.fields.includes('category') ? item.category || '' : '',
-        subcategory: level.fields.includes('subcategory') ? item.subcategory || '' : '',
-      }
-      paths.set(JSON.stringify(path), path)
-    }
-    if (paths.size === 1) return [...paths.values()][0]
-  }
-  return null
-}
-
 function handleItemSearchEnter() {
-  const q = searchNorm.value
-  if (!q) return
-  if (variationResults.value.length === 1) {
-    selectVariationResult(variationResults.value[0])
-    return
-  }
-  if (itemResults.value.length === 1) {
-    selectItem(itemResults.value[0])
-    return
-  }
-  const match = findSingleHierarchySearchMatch(q)
-  if (!match) return
-  setActiveGroup(match.group || null)
-  setActiveCategory(match.category || null)
-  setActiveSubcategory(match.subcategory || null)
-  itemSearch.value = ''
-  nextTick(() => {
-    if (navigationItems.value.length === 1) selectItem(navigationItems.value[0])
-  })
+  if (variationResults.value.length === 1) selectVariationResult(variationResults.value[0])
 }
 
 function backToStep1() {
@@ -844,6 +734,7 @@ const saidaExceedsStock = computed(() =>
   activeSubTab.value === 'saida' &&
   parsedQty.value !== null &&
   selectedVariation.value !== null &&
+  selectedVariation.value.stockConfirmed !== false &&
   parsedQty.value > selectedAvailableStock.value
 )
 
@@ -1009,7 +900,7 @@ async function confirmQuickEntryQueue() {
     const created = await addMovementBatch('entrada', quickEntryQueue.value, {})
     for (const movement of created) {
       const updatedVar = variations.value.find(v => v.id === movement.variationId)
-      if (updatedVar) updatedVar.stock = movement.stockAfter
+      if (updatedVar) { updatedVar.stock = movement.stockAfter; updatedVar.stockConfirmed = movement.stockConfirmed !== false }
     }
     successWithHistoryAction(`${created.length} entrada${created.length === 1 ? '' : 's'} registrada${created.length === 1 ? '' : 's'}.`)
     quickEntryQueue.value = []
@@ -1069,7 +960,7 @@ const quickExitCanAdd = computed(() =>
   Boolean(
     quickExitSelected.value &&
     quickExitQtyParsed.value &&
-    quickExitQtyParsed.value <= quickExitAvailableStock.value &&
+    (quickExitSelected.value.variation.stockConfirmed === false || quickExitQtyParsed.value <= quickExitAvailableStock.value) &&
     quickExitPersonIsValid.value &&
     quickExitDestinationValid.value
   )
@@ -1078,7 +969,7 @@ const quickExitCanAdd = computed(() =>
 const quickExitBlockReason = computed(() => {
   if (!quickExitSelected.value) return 'Selecione uma variação.'
   if (!quickExitQtyParsed.value) return 'Informe uma quantidade maior que zero.'
-  if (quickExitQtyParsed.value > quickExitAvailableStock.value) return `Estoque disponível: ${quickExitAvailableStock.value} ${quickExitSelected.value.item.unit}.`
+  if (quickExitSelected.value.variation.stockConfirmed !== false && quickExitQtyParsed.value > quickExitAvailableStock.value) return `Estoque disponível: ${quickExitAvailableStock.value} ${quickExitSelected.value.item.unit}.`
   if (!quickExitRequestedBy.value.trim()) return 'Selecione quem retirou.'
   if (!quickExitPersonIsValid.value) return 'Quem retirou precisa ser uma pessoa cadastrada.'
   if (!quickExitDestinationValid.value) return 'Selecione ou informe o destino.'
@@ -1086,7 +977,7 @@ const quickExitBlockReason = computed(() => {
 })
 
 function selectQuickExitResult(result) {
-  if (result.variation.stock <= 0) {
+  if (result.variation.stockConfirmed !== false && result.variation.stock <= 0) {
     error('Esta variação está sem estoque para saída.')
     return
   }
@@ -1192,7 +1083,7 @@ async function confirmQuickExitQueue() {
   for (const [variationId, qty] of totals.entries()) {
     const liveVar = variations.value.find(v => v.id === variationId)
     if (!liveVar) { error('Uma variação da fila não foi encontrada.'); return }
-    if (qty > Number(liveVar.stock || 0)) {
+    if (liveVar.stockConfirmed !== false && qty > Number(liveVar.stock || 0)) {
       error(`Estoque insuficiente para ${quickExitQueue.value.find(line => line.variationId === variationId)?.itemName || 'item da fila'}.`)
       return
     }
@@ -1202,7 +1093,7 @@ async function confirmQuickExitQueue() {
     const created = await addMovementBatch('saida', quickExitQueue.value, {})
     for (const movement of created) {
       const updatedVar = variations.value.find(v => v.id === movement.variationId)
-      if (updatedVar) updatedVar.stock = movement.stockAfter
+      if (updatedVar) { updatedVar.stock = movement.stockAfter; updatedVar.stockConfirmed = movement.stockConfirmed !== false }
     }
     for (const movement of created) notifyStockAlert(movement)
     successWithHistoryAction(`${created.length} saída${created.length === 1 ? '' : 's'} registrada${created.length === 1 ? '' : 's'}.`)
@@ -1270,7 +1161,7 @@ async function confirmCurrentMovement() {
     const created = await addMovementBatch(activeSubTab.value, [line], {})
     for (const movement of created) {
       const updatedVar = variations.value.find(v => v.id === movement.variationId)
-      if (updatedVar) updatedVar.stock = movement.stockAfter
+      if (updatedVar) { updatedVar.stock = movement.stockAfter; updatedVar.stockConfirmed = movement.stockConfirmed !== false }
     }
     for (const movement of created) notifyStockAlert(movement)
 
@@ -1353,8 +1244,20 @@ const {
   historyPageSize,
   historyPageSizeOptions,
   historyTotalPages,
-  histTotals,
 } = useMovementHistory(movements)
+const selectedHistoryFilters = computed(() => histFacets.value.flatMap(facet =>
+  facet.selected.map(value => ({ key: facet.key, label: facet.label, value }))))
+const orderedHistoryFacets = computed(() => [...histFacets.value].sort((a, b) =>
+  ['main', 'product', 'details'].indexOf(a.group) - ['main', 'product', 'details'].indexOf(b.group)
+  || a.priority - b.priority))
+const primaryHistoryKeys = ['tipo', 'responsavel', 'local', 'grupo', 'categoria']
+const primaryHistoryFacets = computed(() => orderedHistoryFacets.value.filter(facet => primaryHistoryKeys.includes(facet.key)))
+const extraHistoryFacets = computed(() => orderedHistoryFacets.value.filter(facet => !primaryHistoryKeys.includes(facet.key)))
+const moreHistoryFiltersOpen = ref(false)
+const historyFilterSearch = ref('')
+const searchedHistoryFacets = computed(() => searchHistoryFacets(extraHistoryFacets.value, historyFilterSearch.value))
+const extraHistorySelectedCount = computed(() => extraHistoryFacets.value.reduce((count, facet) => count + facet.selected.length, 0))
+
 
 function successWithHistoryAction(message) {
   success(message, {
@@ -1366,8 +1269,8 @@ function successWithHistoryAction(message) {
 }
 
 watch(() => props.initialHistorySearch, search => {
-  histSearch.value = search || ''
-})
+  if (search !== null) histSearch.value = search || ''
+}, { immediate: true })
 
 const {
   summarySearch,
@@ -1621,27 +1524,35 @@ defineExpose({
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="movement-workspace space-y-4">
 
     <!-- Header -->
     <div>
       <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">Movimentações</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Registre entradas e saídas de estoque</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Registre materiais recebidos ou retirados e acompanhe os lançamentos.</p>
     </div>
 
     <!-- Sub-tabs -->
     <SectionTabs
+      route-tab="movimentacoes"
       variant="line"
       aria-label="Seções de movimentação"
       :model-value="activeSubTab"
-      :tabs="visibleSubTabs"
+      :tabs="mainTabs"
       @update:model-value="switchSubTab"
     />
+
+    <div v-if="canOperate && isRegistering" class="movement-modes">
+      <span class="movement-label">Como registrar</span>
+      <SectionTabs route-tab="movimentacoes" aria-label="Modo de registro"
+        :model-value="activeSubTab" :tabs="registrationTabs" @update:model-value="switchSubTab" />
+    </div>
 
     <!-- ======================================================= -->
     <!-- ENTRADA / SAÍDA — step flow                             -->
     <!-- ======================================================= -->
     <PhotoMovementTab v-if="activeSubTab === 'fotos'" />
+    <MovementImportTab v-else-if="activeSubTab === 'importacao' && isAdmin" />
 
     <template v-else-if="activeSubTab === 'entrada' || activeSubTab === 'saida'">
 
@@ -1649,30 +1560,30 @@ defineExpose({
       <div class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-2">
         <div
-          v-for="(label, i) in ['Buscar item', 'Escolher variação', activeSubTab === 'entrada' ? 'Registrar entrada' : 'Registrar saída']"
+          v-for="(label, i) in ['Selecionar material', activeSubTab === 'entrada' ? 'Registrar entrada' : 'Registrar saída']"
           :key="i"
           class="flex items-center gap-2"
         >
           <div class="flex items-center gap-1.5">
             <span
               class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
-              :class="step === i + 1
+              :class="registrationStep === i + 1
                 ? 'bg-primary-600 dark:bg-primary-500 text-[var(--ds-primary-text)]'
-                : step > i + 1
+                : registrationStep > i + 1
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'"
             >
-              <svg v-if="step > i + 1" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <svg v-if="registrationStep > i + 1" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
               </svg>
               <span v-else>{{ i + 1 }}</span>
             </span>
             <span
-              class="text-xs font-medium hidden sm:inline transition-colors"
-              :class="step === i + 1 ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'"
+              class="text-xs font-medium transition-colors"
+              :class="registrationStep === i + 1 ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'"
             >{{ label }}</span>
           </div>
-          <svg v-if="i < 2" class="w-4 h-4 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <svg v-if="i < 1" class="w-4 h-4 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
           </svg>
         </div>
@@ -1680,277 +1591,68 @@ defineExpose({
 
       </div>
 
-      <!-- ===== STEP 1: Catalog browser ===== -->
-      <div v-if="step === 1">
-
-        <!-- Search bar -->
-        <div class="mb-4">
-          <div class="relative max-w-md">
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-            <input
-              ref="searchInputEl"
-              v-model="itemSearch"
-              type="text"
-              placeholder="Buscar por nome, grupo, categoria, marca, CA..."
-              class="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors"
-              @keydown.enter.prevent="handleItemSearchEnter"
-            />
-            <button
-              v-if="itemSearch"
-              class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
-              @click="itemSearch = ''"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-            </button>
+      <!-- Direct selection: search and hierarchy filters work together. -->
+      <section v-if="step === 1" aria-label="Selecionar material" class="movement-picker">
+        <div class="movement-picker-tools">
+          <label class="movement-search">
+            <span class="movement-label">Qual material você vai {{ activeSubTab === 'entrada' ? 'receber' : 'retirar' }}?</span>
+            <input ref="searchInputEl" v-model="itemSearch" type="search" class="ds-query-input"
+              aria-label="Buscar material para movimentar" placeholder="Nome, medida, marca, CA ou local…"
+              @keydown.enter.prevent="handleItemSearchEnter" />
+          </label>
+          <div class="movement-filter-row">
+            <label><span class="movement-label">Grupo</span>
+              <select :value="activeGroup || ''" @change="setActiveGroup($event.target.value || null)">
+                <option value="">Todos os grupos</option><option v-for="group in uniqueGroups" :key="group">{{ group }}</option>
+              </select>
+            </label>
+            <label><span class="movement-label">Categoria</span>
+              <select :value="activeCategory || ''" :disabled="!activeGroup" @change="setActiveCategory($event.target.value || null)">
+                <option value="">Todas as categorias</option><option v-for="category in navCategories" :key="category">{{ category }}</option>
+              </select>
+            </label>
+            <label v-if="navSubcategories.length"><span class="movement-label">Subcategoria</span>
+              <select :value="activeSubcategory || ''" @change="setActiveSubcategory($event.target.value || null)">
+                <option value="">Todas as subcategorias</option><option v-for="subcategory in navSubcategories" :key="subcategory">{{ subcategory }}</option>
+              </select>
+            </label>
+            <AppButton v-if="itemSearch || activeGroup" variant="ghost" size="sm" @click="clearPickerFilters">Limpar filtros</AppButton>
           </div>
         </div>
-
-        <!-- No items in DB -->
-        <div v-if="items.length === 0" class="py-16 text-center text-gray-400 dark:text-gray-500 text-sm">
-          Nenhum item cadastrado ainda.
+        <div class="movement-results-heading">
+          <p><strong>{{ variationResults.length }}</strong> {{ variationResults.length === 1 ? 'variação encontrada' : 'variações encontradas' }}</p>
+          <span>Selecione uma variação para continuar</span>
         </div>
-
-        <!-- SEARCH MODE: show flat results when searching -->
-        <template v-else-if="searchNorm">
-          <div v-if="variationResults.length === 0 && itemResults.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500 text-sm">
-            Nenhum item encontrado para "<span class="italic">{{ itemSearch }}</span>".
+        <EmptyState v-if="!variationResults.length" title="Nenhuma variação encontrada."
+          text="Revise a busca e os filtros de grupo e categoria." :action-label="itemSearch || activeGroup ? 'Limpar filtros' : ''" @action="clearPickerFilters" />
+        <div v-else class="movement-results">
+          <div class="movement-result movement-column-headings" aria-hidden="true">
+            <span>Material / Variação</span><span>Local</span><span>Estoque atual</span><span></span>
           </div>
-          <div v-else-if="variationResults.length" class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700/50 overflow-hidden">
-            <button
-              v-for="result in variationResults"
-              :key="result.variation.id"
-              type="button"
-              class="group w-full text-left px-4 py-3 transition-colors"
-              :class="activeSubTab === 'saida' && result.variation.stock <= 0
-                ? 'opacity-45 cursor-not-allowed'
-                : 'hover:bg-primary-50 dark:hover:bg-primary-900/20 cursor-pointer'"
-              :disabled="activeSubTab === 'saida' && result.variation.stock <= 0"
-              @click="selectVariationResult(result)"
-            >
-              <div class="flex items-center gap-4">
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate group-hover:text-primary-700 dark:group-hover:text-primary-400 transition-colors">{{ result.item.name }}</p>
-                  <p class="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500 truncate">{{ hierarchyLabel(result.item) }}</p>
-                  <p class="mt-1 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">{{ variationLabel(result.variation, result.item) }}</p>
-                </div>
-                <div class="hidden min-w-32 text-right text-xs text-gray-400 dark:text-gray-500 sm:block">
-                  <p>{{ result.variation.location || result.item.location || 'Sem local' }}</p>
-                  <p v-if="result.variation.destinations?.length" class="truncate">
-                    {{ result.variation.destinations.map(id => getDestinationName(id)).filter(Boolean).join(', ') }}
-                  </p>
-                </div>
-                <div class="w-24 flex-shrink-0 text-right">
-                  <p class="text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500">Estoque</p>
-                  <p
-                    class="text-sm font-bold tabular-nums"
-                    :class="result.variation.stock <= 0
-                      ? 'text-red-500 dark:text-red-400'
-                      : result.variation.minStock > 0 && result.variation.stock <= result.variation.minStock
-                        ? 'text-amber-500 dark:text-amber-400'
-                        : 'text-gray-800 dark:text-gray-100'"
-                  >
-                    {{ result.variation.stock }} {{ result.item.unit }}
-                  </p>
-                </div>
-              </div>
-            </button>
-          </div>
-
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            <button
-              v-for="item in itemResults"
-              :key="item.id"
-              class="group text-left p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-500 hover:shadow-md transition-colors duration-100 cursor-pointer"
-              @click="selectItem(item)"
-            >
-              <div class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center mb-2.5 group-hover:bg-primary-50 dark:group-hover:bg-primary-900/30 transition-colors">
-                <svg class="w-4.5 h-4.5 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-                </svg>
-              </div>
-              <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate mb-0.5 group-hover:text-primary-700 dark:group-hover:text-primary-400 transition-colors">{{ item.name }}</p>
-              <p class="text-[11px] text-gray-400 dark:text-gray-500 truncate mb-1">{{ hierarchyLabel(item) }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ getVariationsForItem(item.id).length }} var. · Estoque: {{ getTotalStock(item.id) }}
-              </p>
-            </button>
-          </div>
-        </template>
-
-        <!-- BROWSE MODE: hierarchical navigation -->
-        <template v-else>
-          <!-- Breadcrumb -->
-          <div v-if="activeGroup" class="flex items-center gap-1.5 text-sm mb-4 flex-wrap">
-            <button class="text-primary-600 dark:text-primary-400 hover:underline font-medium" @click="setActiveGroup(null); itemSearch = ''">Todos</button>
-            <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-            <template v-if="!activeCategory">
-              <span class="text-gray-800 dark:text-gray-100 font-semibold">{{ activeGroup }}</span>
-            </template>
-            <template v-else>
-              <button class="text-primary-600 dark:text-primary-400 hover:underline font-medium" @click="setActiveCategory(null)">{{ activeGroup }}</button>
-              <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-              <template v-if="!activeSubcategory">
-                <span class="text-gray-800 dark:text-gray-100 font-semibold">{{ activeCategory }}</span>
-              </template>
-              <template v-else>
-                <button class="text-primary-600 dark:text-primary-400 hover:underline font-medium" @click="setActiveSubcategory(null)">{{ activeCategory }}</button>
-                <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-                <span class="text-gray-800 dark:text-gray-100 font-semibold">{{ activeSubcategory }}</span>
-              </template>
-            </template>
-          </div>
-
-          <!-- LEVEL: Groups -->
-          <div v-if="!activeGroup" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            <button
-              v-for="g in uniqueGroups"
-              :key="g"
-              class="group text-left p-5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-500 hover:shadow-md transition-colors duration-100 cursor-pointer"
-              @click="setActiveGroup(g); itemSearch = ''"
-            >
-              <div class="w-10 h-10 rounded-lg bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center mb-3 group-hover:bg-primary-100 dark:group-hover:bg-primary-900/50 transition-colors">
-                <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
-                </svg>
-              </div>
-              <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate mb-1">{{ g }}</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500">
-                {{ groupItemCount(g) }} {{ groupItemCount(g) === 1 ? 'item' : 'itens' }}
-                · Estoque: {{ groupStockTotal(g) }}
-              </p>
-            </button>
-          </div>
-
-          <!-- LEVEL: Categories -->
-          <template v-else-if="!activeCategory">
-            <div v-if="navCategories.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              <button
-                v-for="cat in navCategories"
-                :key="cat"
-                class="group text-left p-5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-500 hover:shadow-md transition-colors duration-100 cursor-pointer"
-                @click="setActiveCategory(cat)"
-              >
-                <div class="w-10 h-10 rounded-lg bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center mb-3 group-hover:bg-primary-100 dark:group-hover:bg-primary-900/50 transition-colors">
-                  <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
-                  </svg>
-                </div>
-                <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate mb-1">{{ cat }}</p>
-                <p class="text-xs text-gray-400 dark:text-gray-500">
-                  {{ categoryItemCount(cat) }} {{ categoryItemCount(cat) === 1 ? 'item' : 'itens' }}
-                  · Estoque: {{ categoryStockTotal(cat) }}
-                </p>
-              </button>
-            </div>
-            <!-- No categories — show items as list -->
-            <div v-else class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/50">
-              <button
-                v-for="item in navigationItems"
-                :key="item.id"
-                class="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors flex items-center gap-4 group"
-                @click="selectItem(item)"
-              >
-                <div class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-50 dark:group-hover:bg-primary-900/30 transition-colors">
-                  <svg class="w-4.5 h-4.5 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate group-hover:text-primary-700 dark:group-hover:text-primary-400 transition-colors">{{ item.name }}</p>
-                  <p class="text-[11px] text-gray-400 dark:text-gray-500">{{ item.unit }}</p>
-                </div>
-                <div class="text-right flex-shrink-0">
-                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ getVariationsForItem(item.id).length }} var.</p>
-                  <p class="text-xs font-medium" :class="getTotalStock(item.id) === 0 ? 'text-red-500 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'">Estoque: {{ getTotalStock(item.id) }}</p>
-                </div>
-                <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-primary-500 transition-colors flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </div>
-          </template>
-
-          <!-- LEVEL: Subcategories -->
-          <template v-else-if="!activeSubcategory">
-            <div v-if="navSubcategories.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              <button
-                v-for="sub in navSubcategories"
-                :key="sub"
-                class="group text-left p-5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-500 hover:shadow-md transition-colors duration-100 cursor-pointer"
-                @click="setActiveSubcategory(sub)"
-              >
-                <div class="w-10 h-10 rounded-lg bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center mb-3 group-hover:bg-primary-100 dark:group-hover:bg-primary-900/50 transition-colors">
-                  <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-                  </svg>
-                </div>
-                <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate mb-1">{{ sub }}</p>
-                <p class="text-xs text-gray-400 dark:text-gray-500">
-                  {{ subcategoryItemCount(sub) }} {{ subcategoryItemCount(sub) === 1 ? 'item' : 'itens' }}
-                  · Estoque: {{ subcategoryStockTotal(sub) }}
-                </p>
-              </button>
-            </div>
-            <!-- No subcategories — show items as list -->
-            <div v-else class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/50">
-              <button
-                v-for="item in navigationItems"
-                :key="item.id"
-                class="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors flex items-center gap-4 group"
-                @click="selectItem(item)"
-              >
-                <div class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-50 dark:group-hover:bg-primary-900/30 transition-colors">
-                  <svg class="w-4.5 h-4.5 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate group-hover:text-primary-700 dark:group-hover:text-primary-400 transition-colors">{{ item.name }}</p>
-                  <p class="text-[11px] text-gray-400 dark:text-gray-500">{{ item.unit }}</p>
-                </div>
-                <div class="text-right flex-shrink-0">
-                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ getVariationsForItem(item.id).length }} var.</p>
-                  <p class="text-xs font-medium" :class="getTotalStock(item.id) === 0 ? 'text-red-500 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'">Estoque: {{ getTotalStock(item.id) }}</p>
-                </div>
-                <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-primary-500 transition-colors flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </div>
-          </template>
-
-          <!-- LEVEL: Items (leaf) — list format -->
-          <template v-else>
-            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/50">
-              <button
-                v-for="item in navigationItems"
-                :key="item.id"
-                class="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors flex items-center gap-4 group"
-                @click="selectItem(item)"
-              >
-                <div class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-50 dark:group-hover:bg-primary-900/30 transition-colors">
-                  <svg class="w-4.5 h-4.5 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate group-hover:text-primary-700 dark:group-hover:text-primary-400 transition-colors">{{ item.name }}</p>
-                  <p class="text-[11px] text-gray-400 dark:text-gray-500">{{ item.unit }}</p>
-                </div>
-                <div class="text-right flex-shrink-0">
-                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ getVariationsForItem(item.id).length }} var.</p>
-                  <p class="text-xs font-medium" :class="getTotalStock(item.id) === 0 ? 'text-red-500 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'">Estoque: {{ getTotalStock(item.id) }}</p>
-                </div>
-                <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-primary-500 transition-colors flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </div>
-          </template>
-        </template>
-      </div>
+          <button v-for="result in pickerRows" :key="result.variation.id" type="button" class="movement-result movement-result-button"
+            :disabled="activeSubTab === 'saida' && result.variation.stockConfirmed !== false && result.variation.stock <= 0"
+            @click="selectVariationResult(result)">
+            <span class="movement-material">
+              <strong>{{ result.item.name }}</strong>
+              <span class="movement-attributes">{{ variationLabel(result.variation, result.item) }}</span>
+              <small>{{ hierarchyLabel(result.item) }}</small>
+            </span>
+            <span class="movement-location">{{ result.variation.location || result.item.location || 'Sem local' }}</span>
+            <span class="movement-stock">
+              <strong>{{ result.variation.stock }} <small>{{ result.item.unit }}</small></strong>
+              <small v-if="result.variation.stockConfirmed === false">Conferir ao movimentar</small>
+              <small v-else-if="result.variation.stock <= 0">Sem estoque</small>
+            </span>
+            <span class="movement-next" aria-hidden="true">→</span>
+          </button>
+        </div>
+        <div v-if="pickerPages > 1" class="movement-pagination">
+          <span>{{ (pickerPage - 1) * pickerPageSize + 1 }}–{{ Math.min(pickerPage * pickerPageSize, variationResults.length) }} de {{ variationResults.length }}</span>
+          <AppButton variant="secondary" size="sm" :disabled="pickerPage === 1" @click="pickerPage--">Anterior</AppButton>
+          <span>Página {{ pickerPage }} de {{ pickerPages }}</span>
+          <AppButton variant="secondary" size="sm" :disabled="pickerPage === pickerPages" @click="pickerPage++">Próxima</AppButton>
+        </div>
+      </section>
 
       <!-- ===== STEP 2: Pick variation ===== -->
       <div v-else-if="step === 2">
@@ -2000,8 +1702,8 @@ defineExpose({
           <div class="flex-1 min-w-0">
             <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">{{ selectedItem?.name }}</h2>
             <p class="text-sm text-gray-500 dark:text-gray-400">
-              {{ selectedItem?.unit }} &middot; Mín. {{ selectedItem?.minStock }}  &middot;
-              <span :class="getTotalStock(selectedItem?.id) < selectedItem?.minStock ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-green-600 dark:text-green-400 font-semibold'">
+              {{ selectedItem?.unit }} &middot; Mín. {{ selectedItem?.minStock ?? '—' }}  &middot;
+              <span :class="selectedItem?.minStock > 0 && getTotalStock(selectedItem?.id) < selectedItem.minStock ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-green-600 dark:text-green-400 font-semibold'">
                 Estoque: {{ getTotalStock(selectedItem?.id) }}
               </span>
             </p>
@@ -2033,10 +1735,10 @@ defineExpose({
                   v-for="v in itemVariations"
                   :key="v.id"
                   class="border-b border-gray-100 dark:border-gray-700/50 transition-colors"
-                  :class="activeSubTab === 'saida' && v.stock === 0
+                  :class="activeSubTab === 'saida' && v.stockConfirmed !== false && v.stock <= 0
                     ? 'opacity-40 cursor-not-allowed'
                     : 'hover:bg-primary-50 dark:hover:bg-primary-900/20 cursor-pointer'"
-                  @click="!(activeSubTab === 'saida' && v.stock === 0) && selectVariation(v)"
+                  @click="!(activeSubTab === 'saida' && v.stockConfirmed !== false && v.stock <= 0) && selectVariation(v)"
                 >
                   <td v-for="attr in selectedItem?.attributes" :key="attr" class="px-4 py-2.5 text-gray-700 dark:text-gray-300">{{ v.values?.[attr] || '—' }}</td>
                   <td
@@ -2048,7 +1750,7 @@ defineExpose({
                     <span v-else-if="v.minStock > 0 && v.stock <= v.minStock" class="ml-1 text-[10px]">&#x1F7E1;</span>
                   </td>
                   <td class="px-4 py-2.5 text-center tabular-nums text-gray-500 dark:text-gray-400">
-                    {{ v.minStock ?? 0 }}
+                    {{ v.minStock ?? '—' }}
                   </td>
                   <td class="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-400">
                     {{ v.location || selectedItem?.location || '—' }}
@@ -2731,8 +2433,8 @@ defineExpose({
                 :key="result.variation.id"
                 type="button"
                 class="w-full px-4 py-3 text-left transition-colors"
-                :class="result.variation.stock <= 0 ? 'cursor-not-allowed opacity-45' : 'hover:bg-primary-50 dark:hover:bg-primary-900/20'"
-                :disabled="result.variation.stock <= 0"
+                :class="result.variation.stockConfirmed !== false && result.variation.stock <= 0 ? 'cursor-not-allowed opacity-45' : 'hover:bg-primary-50 dark:hover:bg-primary-900/20'"
+                :disabled="result.variation.stockConfirmed !== false && result.variation.stock <= 0"
                 @click="selectQuickExitResult(result)"
               >
                 <div class="flex items-center gap-4">
@@ -2774,7 +2476,7 @@ defineExpose({
                 min="1"
                 step="1"
                 class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-gray-800 transition-colors focus:outline-none focus:ring-1 dark:bg-gray-800 dark:text-gray-100"
-                :class="quickExitAttempted && (!quickExitQtyParsed || quickExitQtyParsed > quickExitAvailableStock)
+                :class="quickExitAttempted && (!quickExitQtyParsed || (quickExitSelected.variation.stockConfirmed !== false && quickExitQtyParsed > quickExitAvailableStock))
                   ? 'border-amber-400 focus:border-amber-500 focus:ring-amber-500 dark:border-amber-700'
                   : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600'"
                 @keydown.enter.prevent="addQuickExitLine"
@@ -2922,6 +2624,72 @@ defineExpose({
     <!-- HISTÓRICO                                               -->
     <!-- ======================================================= -->
     <template v-else-if="activeSubTab === 'historico'">
+      <div class="movement-history-toolbar">
+      <div class="ds-query-bar" role="search" aria-label="Busca no histórico">
+        <input v-model="histSearch" class="ds-query-input" type="search" aria-label="Buscar no histórico" placeholder="Buscar material, pessoa, destino ou documento…" />
+        <AppButton v-if="hasHistFilters" variant="secondary" @click="clearHistFilters">Limpar filtros</AppButton>
+      </div>
+      <div class="movement-history-tools">
+        <label><span class="movement-label">De</span><input v-model="histDateFrom" type="date" aria-label="Data inicial" /></label>
+        <label><span class="movement-label">Até</span><input v-model="histDateTo" type="date" aria-label="Data final" /></label>
+      </div>
+      </div>
+      <div class="movement-history-filters" aria-label="Filtros do histórico">
+          <div v-for="(facet, index) in primaryHistoryFacets" :key="facet.key" class="movement-facet">
+            <button type="button" :popovertarget="`history-filter-${index}`"
+              :style="{ anchorName: `--history-filter-${index}` }"
+              :class="{ 'movement-facet-selected': facet.selected.length }">
+              {{ facet.label }} <span v-if="facet.selected.length">({{ facet.selected.length }})</span>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            <div :id="`history-filter-${index}`" popover="auto" class="movement-facet-options"
+              :style="{ positionAnchor: `--history-filter-${index}` }" role="group" :aria-label="`Filtrar por ${facet.label}`">
+              <div class="movement-facet-title"><strong>{{ facet.label }}</strong>
+                <button type="button" :popovertarget="`history-filter-${index}`" popovertargetaction="hide" :aria-label="`Fechar filtro ${facet.label}`">×</button>
+              </div>
+              <div class="movement-facet-scroll">
+              <label v-for="option in facet.options" :key="option.value">
+                <input type="checkbox" :checked="facet.selected.includes(option.value)" @change="toggleHistFilter(facet.key, option.value)" />
+                <span>{{ option.value }}</span><small>{{ option.count }}</small>
+              </label>
+              </div>
+            </div>
+          </div>
+          <AppButton v-if="extraHistoryFacets.length" variant="secondary" size="sm" @click="historyFilterSearch = ''; moreHistoryFiltersOpen = true">
+            Mais filtros<span v-if="extraHistorySelectedCount"> ({{ extraHistorySelectedCount }})</span>
+          </AppButton>
+          <span class="movement-result-count" role="status">{{ filteredMovements.length }} movimentações</span>
+      </div>
+      <AppDialog :visible="moreHistoryFiltersOpen" aria-label="Mais filtros do histórico" @close="moreHistoryFiltersOpen = false">
+        <section class="history-more-panel">
+          <header class="movement-facet-title">
+            <div><h2>Mais filtros</h2><p>Refine por operador, material ou atributos da variação.</p></div>
+            <AppButton variant="ghost" size="icon" aria-label="Fechar mais filtros" @click="moreHistoryFiltersOpen = false">×</AppButton>
+          </header>
+          <input v-model="historyFilterSearch" autofocus type="search" class="ds-query-input" aria-label="Buscar filtro ou valor" placeholder="Buscar filtro ou valor: marca, tamanho, bico…" />
+          <div class="history-more-list">
+            <details v-for="facet in searchedHistoryFacets" :key="facet.key" :open="!!historyFilterSearch.trim()">
+              <summary>{{ facet.label }}<span v-if="facet.selected.length"> · {{ facet.selected.length }} selecionados</span></summary>
+              <div class="history-more-options">
+                <label v-for="option in facet.options" :key="option.value">
+                  <input type="checkbox" :checked="facet.selected.includes(option.value)" @change="toggleHistFilter(facet.key, option.value)" />
+                  <span>{{ option.value }}</span><small>{{ option.count }}</small>
+                </label>
+              </div>
+            </details>
+            <p v-if="!searchedHistoryFacets.length" class="history-filter-empty">Nenhum filtro ou valor encontrado.</p>
+          </div>
+          <footer><span>{{ extraHistorySelectedCount }} selecionados · Aplicados automaticamente</span>
+            <AppButton variant="primary" @click="moreHistoryFiltersOpen = false">Concluído</AppButton>
+          </footer>
+        </section>
+      </AppDialog>
+      <div v-if="selectedHistoryFilters.length" class="movement-filter-tags" aria-label="Filtros ativos">
+        <button v-for="filter in selectedHistoryFilters" :key="filter.key + filter.value" type="button"
+          :aria-label="`Remover filtro ${filter.label}: ${filter.value}`" @click="toggleHistFilter(filter.key, filter.value)">
+          {{ filter.label }}: {{ filter.value }} <span aria-hidden="true">×</span>
+        </button>
+      </div>
       <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
 
         <!-- Table area -->
@@ -2984,7 +2752,8 @@ defineExpose({
 
                     <!-- Item + variation -->
                     <td class="px-3 py-2.5 max-w-[220px]">
-                      <p class="font-medium text-gray-800 dark:text-gray-100 text-xs leading-snug truncate">{{ m.itemName }}</p>
+                      <AppLink v-if="m.variationId" :target="{ tab: 'inventario', section: 'estoque', variationId: m.variationId }" class="block font-medium text-gray-800 dark:text-gray-100 text-xs leading-snug truncate hover:underline" @navigate="target => emit('navigate', target)">{{ m.itemName }}</AppLink>
+                      <p v-else class="font-medium text-gray-800 dark:text-gray-100 text-xs leading-snug truncate">{{ m.itemName }}</p>
                       <p class="text-[10px] text-gray-400 dark:text-gray-500 truncate mb-1">{{ [m.itemGroup, m.itemCategory, m.itemSubcategory].filter(Boolean).join(' › ') }}</p>
                       <div class="flex flex-wrap gap-0.5">
                         <span
@@ -3074,12 +2843,6 @@ defineExpose({
             <div class="flex flex-col gap-3 border-t border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-400 sm:flex-row sm:items-center sm:justify-between">
               <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
                 <span>{{ filteredMovements.length }} movimentações</span>
-                <span v-if="histTotals.entradas > 0" class="font-semibold text-green-600 dark:text-green-400">
-                  ↑ {{ histTotals.entradas }} entrada{{ histTotals.entradas !== 1 ? 's' : '' }}
-                </span>
-                <span v-if="histTotals.saidas > 0" class="font-semibold text-red-500 dark:text-red-400">
-                  ↓ {{ histTotals.saidas }} saída{{ histTotals.saidas !== 1 ? 's' : '' }}
-                </span>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <label class="flex items-center gap-2">
@@ -3391,3 +3154,86 @@ defineExpose({
       </div>
   </AppDialog>
 </template>
+
+<style scoped>
+.movement-workspace { color: var(--ds-text); }
+.movement-label { display: block; font-size: 12px; font-weight: 600; color: var(--ds-text-soft); margin-bottom: 6px; }
+.movement-modes { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.movement-modes > .movement-label { margin: 0; }
+.movement-modes :deep(.ds-segmented) { flex-wrap: wrap; }
+.movement-picker { border: 1px solid var(--ds-border); border-radius: 8px; background: var(--ds-surface); overflow: hidden; }
+.movement-picker-tools { padding: 16px; display: grid; gap: 12px; }
+.movement-search { display: block; }
+.movement-search input { min-height: 44px; }
+.movement-filter-row, .movement-history-tools { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.movement-filter-row > label { flex: 1 1 180px; min-width: 0; }
+.movement-filter-row select, .movement-history-tools input { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--ds-border); border-radius: 6px; background: var(--ds-surface); color: var(--ds-text); font-size: 14px; }
+.movement-filter-row select:disabled { opacity: .55; }
+.movement-workspace :is(button, select, input, summary):focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: 2px; }
+.movement-results-heading { padding: 10px 16px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--ds-border); color: var(--ds-text-soft); font-size: 12px; }
+.movement-result { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 18%) 160px 16px; align-items: center; gap: 16px; padding: 12px 16px; }
+.movement-column-headings { background: var(--ds-bg); color: var(--ds-text-soft); font-size: 12px; border-block: 1px solid var(--ds-border); }
+.movement-column-headings > :nth-child(3) { text-align: right; }
+.movement-result-button { width: 100%; text-align: left; border-bottom: 1px solid var(--ds-border); cursor: pointer; font-size: 14px; }
+.movement-result-button:last-child { border-bottom: 0; }
+.movement-result-button:hover:not(:disabled), .movement-result-button:focus-visible { background: var(--ds-active-bg); }
+.movement-result-button:disabled { cursor: not-allowed; color: var(--ds-text-soft); }
+.movement-material { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.movement-material strong { font-weight: 600; }
+.movement-material small { color: var(--ds-text-subtle); font-size: 11px; }
+.movement-attributes { font-size: 12px; color: var(--ds-text-soft); }
+.movement-location { font-size: 12px; color: var(--ds-text-soft); overflow-wrap: anywhere; }
+.movement-stock { text-align: right; display: grid; gap: 4px; font-variant-numeric: tabular-nums; }
+.movement-stock small { color: var(--ds-text-soft); font-size: 11px; font-weight: 400; }
+.movement-next { color: var(--ds-active-text); }
+.movement-pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--ds-border); font-size: 12px; }
+.movement-pagination > :first-child { margin-right: auto; }
+.movement-history-tools > label { flex: 0 1 180px; }
+.movement-history-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.movement-history-toolbar .ds-query-bar { flex: 1 1 320px; margin: 0; }
+.movement-history-toolbar .ds-query-bar > button { flex-shrink: 0; white-space: nowrap; }
+.movement-history-toolbar .movement-history-tools { flex-wrap: nowrap; }
+.movement-history-toolbar .movement-history-tools > label { width: 150px; }
+.history-more-panel { width: min(560px, 100%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; gap: 16px; padding: 20px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-surface); color: var(--ds-text); }
+.history-more-panel h2 { font-size: 18px; font-weight: 600; }
+.history-more-panel header { margin: 0; }
+.history-more-panel header p, .history-more-panel footer span { font-size: 12px; color: var(--ds-text-soft); margin-top: 4px; }
+.history-more-panel > input { flex-shrink: 0; }
+.history-more-list { overflow-y: auto; min-height: 0; }
+.history-more-list details { border-bottom: 1px solid var(--ds-border); }
+.history-more-list summary { padding: 12px 4px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.history-more-list summary span { font-size: 12px; color: var(--ds-active-text); }
+.history-more-options { max-height: 220px; overflow-y: auto; padding: 0 8px 12px; }
+.history-more-options label { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 13px; cursor: pointer; }
+.history-more-options label span { flex: 1; overflow-wrap: anywhere; }
+.history-more-options input { accent-color: var(--ds-active-text); }
+.history-more-options small, .history-filter-empty { color: var(--ds-text-soft); }
+.history-more-panel footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.history-more-panel :is(input, summary, button):focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: 2px; }
+.movement-result-count { align-self: center; margin-left: auto; color: var(--ds-text-soft); font-size: 12px; }
+.movement-history-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.movement-facet > button { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--ds-border); background: var(--ds-surface); color: var(--ds-text-soft); border-radius: 6px; font-size: 13px; cursor: pointer; }
+.movement-facet > .movement-facet-selected { background: var(--ds-active-bg); color: var(--ds-active-text); }
+.movement-facet-options { position: fixed; inset: auto; position-area: bottom span-right; position-try-fallbacks: flip-inline, flip-block; width: min(300px, calc(100vw - 32px)); margin: 6px 0; padding: 12px; border: 1px solid var(--ds-border); border-radius: 8px; background: var(--ds-surface); color: var(--ds-text); box-shadow: 0 8px 24px #0003; }
+.movement-facet-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.movement-facet-title button { min-width: 32px; min-height: 32px; border-radius: 4px; cursor: pointer; font-size: 20px; }
+.movement-facet-scroll { max-height: min(280px, 45dvh); overflow-y: auto; }
+.movement-facet-options label { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; font-size: 13px; }
+.movement-facet-options input { accent-color: var(--ds-active-text); }
+.movement-facet-options span { flex: 1; overflow-wrap: anywhere; }
+.movement-facet-options small { color: var(--ds-text-subtle); }
+.movement-filter-tags { display: flex; gap: 8px; flex-wrap: wrap; }
+.movement-filter-tags button { background: var(--ds-active-bg); color: var(--ds-active-text); border: 1px solid var(--ds-border); border-radius: 6px; padding: 6px 10px; min-height: 36px; font-size: 12px; cursor: pointer; }
+@media (max-width: 640px) {
+  .movement-result { grid-template-columns: minmax(0, 1fr) 110px; gap: 8px; padding: 12px; }
+  .movement-material { grid-column: 1; grid-row: 1; }
+  .movement-stock { grid-column: 2; grid-row: 1 / span 2; }
+  .movement-location { grid-column: 1; grid-row: 2; }
+  .movement-next, .movement-column-headings { display: none; }
+  .movement-results-heading > span { display: none; }
+  .movement-filter-row > label { flex-basis: 100%; }
+  .movement-history-tools > label { flex: 1 1 120px; }
+  .movement-history-toolbar .movement-history-tools { width: 100%; }
+  .movement-workspace .ds-query-bar { flex-wrap: wrap; }
+}
+</style>

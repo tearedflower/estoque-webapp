@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import cors from 'cors'
+import { StockConfirmationError } from '../utils/stockConfirmation.js'
 
 const loginAttempts = new Map()
 const LOGIN_LIMIT = 10
@@ -57,6 +58,9 @@ export function requestLogger(req, res, next) {
 }
 
 export function apiErrorHandler(error, req, res, next) {
+  if (error instanceof StockConfirmationError && !res.headersSent) {
+    return res.status(error.status).json({ error: error.message, code: error.code, confirmations: error.confirmations })
+  }
   console.error(JSON.stringify({
     type: 'error',
     requestId: req.requestId,

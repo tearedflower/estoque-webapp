@@ -59,8 +59,10 @@ const {
   editingUnitItemId,
   editUnitValue,
   editingItemModel,
+  editItemModelName,
   startEditItemModel,
   cancelEditItemModel,
+  saveItemModelName,
   startEditUnit,
   saveEditUnit,
   cancelEditUnit,
@@ -1140,13 +1142,13 @@ const {
   <AppDialog
     v-if="editingItemModel"
     visible
-    aria-label="Editar atributos do modelo"
+    aria-label="Editar modelo"
     @close="cancelEditItemModel"
   >
     <section class="w-full max-w-lg overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
       <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
         <div>
-          <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Atributos do modelo</p>
+          <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Editar modelo</p>
           <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingItemModel.name }}</h3>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Renomear preserva os valores das variações. Excluir remove o campo das variações atuais.</p>
         </div>
@@ -1154,6 +1156,28 @@ const {
       </div>
 
       <div class="space-y-3 px-5 py-4">
+        <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+          <label for="edit-model-name" class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Nome do modelo</label>
+          <div class="mt-2 flex gap-2">
+            <input
+              id="edit-model-name"
+              v-model="editItemModelName"
+              class="ds-input min-w-0 flex-1"
+              @keydown.enter.prevent="saveItemModelName"
+            />
+            <button
+              type="button"
+              class="min-h-10 rounded-lg bg-primary-600 px-4 text-sm font-semibold hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+              style="color: var(--ds-primary-text)"
+              :disabled="!editItemModelName.trim() || editItemModelName.trim() === editingItemModel.name"
+              @click="saveItemModelName"
+            >
+              Salvar nome
+            </button>
+          </div>
+        </div>
+
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</p>
         <div v-if="editingItemModel.attributes?.length" class="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
           <div v-for="attr in editingItemModel.attributes" :key="attr" class="flex min-h-11 items-center justify-between gap-3 px-3 py-2">
             <template v-if="isEditingAttr(editingItemModel.id, attr)">

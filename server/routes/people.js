@@ -2,6 +2,7 @@ import { Router } from 'express'
 import crypto from 'crypto'
 import db from '../db.js'
 import { requireAdmin, requireAuth } from '../middleware/auth.js'
+import { queuePeopleRoleSync } from '../peopleRoleSync.js'
 
 const router = Router()
 
@@ -51,6 +52,7 @@ router.post('/', requireAuth, requireAdmin, (req, res) => {
   db.prepare('INSERT INTO people (id, name, role_text, registration, active, status) VALUES (?, ?, ?, ?, ?, ?)').run(
     id, name, role, registration, active ? 1 : 0, status
   )
+  queuePeopleRoleSync()
 
   res.json({ id, name, role, registration, active, status })
 })
@@ -84,12 +86,14 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
       db.prepare('UPDATE motor_events SET performed_by = ? WHERE lower(performed_by) = lower(?)').run(name, current.name)
     }
   })()
+  queuePeopleRoleSync()
   res.json({ id: req.params.id, name, role, registration, active, status })
 })
 
 // DELETE /api/people/:id
 router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   db.prepare('DELETE FROM people WHERE id = ?').run(req.params.id)
+  queuePeopleRoleSync()
   res.json({ ok: true })
 })
 

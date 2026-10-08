@@ -234,7 +234,7 @@ function rowsToCsv(rows) {
     row.stockAtClose || 0,
     row.monthEntradas || 0,
     row.monthSaidas || 0,
-    row.minStock || 0,
+    row.minStock ?? '',
     closingStatus(row),
     row.location || '',
     destinationsText(row),

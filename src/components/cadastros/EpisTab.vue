@@ -386,7 +386,7 @@ function setRuleQuantityValue(rule, value) {
     <header class="ds-page-header">
       <div>
         <h1 class="ds-page-title">Editar EPIs</h1>
-        <p class="ds-page-subtitle">Defina os equipamentos obrigatórios, a quantidade e a periodicidade de entrega por cargo.</p>
+        <p class="ds-page-subtitle">Defina os equipamentos obrigatórios, a quantidade e a periodicidade por cargo. Use 0 para não controlar trocas.</p>
       </div>
     </header>
 
@@ -502,12 +502,12 @@ function setRuleQuantityValue(rule, value) {
                 <input
                   :value="ruleDayValue(rule)"
                   type="number"
-                  min="1"
+                  min="0"
                   step="1"
                   class="ds-input"
                   @input="setRuleDayValue(rule, $event.target.value)"
                 />
-                <span class="text-xs text-gray-500 dark:text-gray-400">dias</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ Number(ruleDayValue(rule)) === 0 ? 'sem controle' : 'dias' }}</span>
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-2 xl:justify-end">

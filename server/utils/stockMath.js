@@ -1,4 +1,5 @@
 export function parsePositiveQty(qty) {
+  if (typeof qty !== 'number' && typeof qty !== 'string') return null
   const n = Number(qty)
   return Number.isFinite(n) && n > 0 ? n : null
 }
@@ -10,7 +11,8 @@ export function calculateStockAfter(type, stockBefore, qty) {
 }
 
 export function hasEnoughStock(type, stockBefore, qty) {
-  return calculateStockAfter(type, stockBefore, qty) >= 0
+  const stockAfter = calculateStockAfter(type, stockBefore, qty)
+  return type === 'entrada' || stockAfter >= 0
 }
 
 export function isAdminStockAdjustment(docRef, role) {

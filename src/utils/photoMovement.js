@@ -218,7 +218,7 @@ export function photoBatchBlockReason(batch, photos, items, variations) {
       if (!fields.destinationId && !fields.destinationOther) return 'Selecione o destino em todas as fotos.'
       if (fields.destinationOther && !String(fields.destination || '').trim()) return 'Descreva os destinos informados como Outro.'
       const accumulated = (requestedByVariation.get(stockKey) || 0) + qty
-      if (accumulated > availableStock) return `A saída acumulada de ${variation ? variationDescription(variation) : photo.catalog.name} excede o saldo disponível.`
+      if (variation?.stockConfirmed !== false && !photo.createCatalog && accumulated > availableStock) return `A saída acumulada de ${variation ? variationDescription(variation) : photo.catalog.name} excede o saldo disponível.`
       requestedByVariation.set(stockKey, accumulated)
     }
   }

@@ -11,7 +11,7 @@ export function normalizeItemIdentity(value) {
     .replace(/\s+/g, ' ')
 }
 
-export function findDuplicateItem(data) {
+export function findDuplicateItem(data, excludeId = '') {
   const name = normalizeItemIdentity(data.name)
   const hierarchyName = normalizeItemIdentity(data.subcategory || data.category || data.group)
   const candidateIsHierarchy = name === hierarchyName
@@ -22,6 +22,7 @@ export function findDuplicateItem(data) {
       EXISTS(SELECT 1 FROM variations v WHERE v.item_id = i.id AND v.active = 1) AS has_variations
     FROM items i WHERE i.active = 1
   `).all().find(item => {
+    if (item.id === excludeId) return false
     if (normalizeItemIdentity(item.name) !== name) return false
     const existingHierarchyName = normalizeItemIdentity(item.subcategory || item.category || item.group_name)
     const existingIsHierarchy = !item.has_variations && normalizeItemIdentity(item.name) === existingHierarchyName

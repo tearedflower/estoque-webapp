@@ -5,7 +5,7 @@ import { personStatusLabel, usePeople } from '../../composables/usePeople.js'
 import { useMovements } from '../../composables/useMovements.js'
 import { useEpis } from '../../composables/useEpis.js'
 import { useToast } from '../../composables/useToast.js'
-import { movementPersonMatches, targetMatchesCatalogRow } from '../../utils/epiSheet.js'
+import { catalogRowsForTarget, movementPersonMatches } from '../../utils/epiSheet.js'
 import AttributeBadges from '../ui/AttributeBadges.vue'
 import AppDialog from '../ui/AppDialog.vue'
 import AppButton from '../ui/AppButton.vue'
@@ -96,7 +96,8 @@ function targetMatchesMovement(target, movement) {
 }
 
 function periodForRule(rule) {
-  const days = Number(rule?.days || 0)
+  const days = Number(rule?.days ?? 0)
+  if (days === 0) return null
   if (Number.isInteger(days) && days > 0) return { days }
   return activePeriodicities.value.find(period =>
     period.targetType === rule.targetType && period.targetKey === rule.targetKey
@@ -157,10 +158,7 @@ function resolveQuickTarget(rule) {
 }
 
 function targetRows(rule) {
-  const target = targetFromRule(rule)
-  return variations.value
-    .map(variation => ({ variation, item: itemById.value.get(variation.itemId) }))
-    .filter(row => row.item && targetMatchesCatalogRow(target, row.item, row.variation))
+  return catalogRowsForTarget(items.value, variations.value, rule)
 }
 
 function targetVariationRow(rule) {
@@ -179,6 +177,7 @@ const records = computed(() => {
     if (!role) continue
     const rules = activeRoleRules.value.filter(rule => normalize(rule.roleName) === normalize(role))
     for (const rule of rules) {
+      if (Number(rule.days) === 0 || !targetRows(rule).length) continue
       const target = targetFromRule(rule)
       const movement = movements.value
         .filter(movement => movementPersonMatches(movement, person) && targetMatchesMovement(target, movement))
@@ -440,7 +439,7 @@ const bulkValidation = computed(() => {
   }
   for (const [variationId, qty] of requestedByVariation) {
     const variation = variations.value.find(row => row.id === variationId)
-    if (Number(variation?.stock || 0) < qty) return 'O estoque não cobre todas as reposições selecionadas.'
+    if (variation?.stockConfirmed !== false && Number(variation?.stock || 0) < qty) return 'O estoque não cobre todas as reposições selecionadas.'
   }
   return ''
 })
@@ -473,7 +472,7 @@ async function submitBulkDelivery() {
     const created = await addMovementBatch('saida', lines, {}, `epi_${Date.now()}_${lines.length}`)
     for (const movement of created) {
       const variation = variations.value.find(row => row.id === movement.variationId)
-      if (variation) variation.stock = movement.stockAfter
+      if (variation) { variation.stock = movement.stockAfter; variation.stockConfirmed = movement.stockConfirmed !== false }
     }
     success(`${created.length} reposição(ões) de EPI registrada(s).`)
     selectedRecordKeys.value = []

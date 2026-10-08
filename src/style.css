@@ -318,14 +318,56 @@
     transition-delay: 0s;
   }
 
-  .ds-page.has-docked-sidebar .ds-rail {
-    transform: translateX(-100%);
-    visibility: hidden;
-    pointer-events: none;
+  .ds-workspace-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
   }
 
-  .ds-page.has-docked-sidebar .ds-app-main {
-    margin-left: 17rem !important;
+  @media (min-width: 1100px) {
+    .ds-workspace-filtered {
+      grid-template-columns: 15rem minmax(0, 1fr);
+    }
+  }
+
+  #workspace-filters > aside {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: 65vh;
+    z-index: auto !important;
+    padding-bottom: 0;
+    border: 1px solid var(--ds-border);
+    border-radius: 8px;
+    overflow: auto;
+    animation: none;
+    box-shadow: none !important;
+  }
+
+  .ds-query-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .ds-query-input {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid var(--ds-border);
+    border-radius: 6px;
+    background: var(--ds-surface);
+    color: var(--ds-text);
+    font-size: 14px;
+  }
+
+  .ds-query-input:focus-visible {
+    outline: 2px solid var(--ds-active-text);
+    outline-offset: 2px;
   }
 
   .catalog-sidebar.catalog-sidebar-docked {
@@ -1212,6 +1254,23 @@
   /* ----- Responsivo ----- */
 
   @media (max-width: 1100px) {
+    #workspace-filters > aside {
+      position: fixed !important;
+      inset: 0 auto 0 0 !important;
+      width: min(17rem, calc(100vw - 3.5rem)) !important;
+      max-height: none;
+      border-radius: 0;
+      z-index: 45 !important;
+      transform: translateX(-100%) !important;
+      visibility: hidden !important;
+      box-shadow: var(--ds-shadow-pop) !important;
+    }
+
+    #workspace-filters > aside.mobile-sidebar-open {
+      transform: translateX(0) !important;
+      visibility: visible !important;
+    }
+
     .dashboard-pulse {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

@@ -1,9 +1,12 @@
 import { Router } from 'express'
 import crypto from 'crypto'
 import db from '../db.js'
+import { importMovementHistory } from '../utils/importMovementHistory.js'
+import { createBackup } from '../backup.js'
+import { prepareStockConfirmations, applyStockConfirmations, confirmStockAdjustment } from '../utils/stockConfirmation.js'
 import { requireAdmin, requireAuth, requireOperator } from '../middleware/auth.js'
 import { findDuplicateItem, normalizeItemIdentity } from '../utils/catalogIdentity.js'
-import { calculateStockAfter, isAdminStockAdjustment, parsePositiveQty } from '../utils/stockMath.js'
+import { calculateStockAfter, hasEnoughStock, isAdminStockAdjustment, parsePositiveQty } from '../utils/stockMath.js'
 import { getDestinationFullName } from '../utils/destinations.js'
 
 const router = Router()
@@ -181,6 +184,7 @@ function toMovement(row) {
     note: row.note,
     operatorId: row.operator_id || '',
     operatorName: row.operator_name || '',
+    affectsStock: row.affects_stock !== 0,
   }
 }
 
@@ -213,13 +217,14 @@ router.post('/', requireAuth, requireOperator, (req, res) => {
     return res.status(400).json({ error: 'Variacao nao pertence ao item informado.' })
   }
 
-  const stockBefore = variation.stock
+  const isStockAdjustment = isAdminStockAdjustment(m.docRef, req.user?.role)
+  const confirmations = isStockAdjustment ? new Map() : prepareStockConfirmations(db, [m], m.stockCounts)
+  const stockBefore = confirmations.get(m.variationId)?.countedStock ?? variation.stock
   const stockAfter = calculateStockAfter(m.type, stockBefore, qty)
-  if (stockAfter < 0) return res.status(400).json({ error: 'Estoque insuficiente para essa saida.' })
+  if (!hasEnoughStock(m.type, stockBefore, qty)) return res.status(400).json({ error: 'Estoque insuficiente para essa saida.' })
 
   const costValidation = parseOptionalCostStrict(m.unitCost)
   if (m.type === 'entrada' && !costValidation.ok) return res.status(400).json({ error: costValidation.error })
-  const isStockAdjustment = isAdminStockAdjustment(m.docRef, req.user?.role)
   const supplierValidation = m.type === 'entrada' ? validateMovementSupplier(m) : { ok: true, supplier: '' }
   if (!supplierValidation.ok) return res.status(400).json({ error: supplierValidation.error })
   const personValidation = m.type === 'saida' && !isStockAdjustment ? validateMovementPerson(m) : { ok: true, requestedBy: '', requestedByPersonId: '' }
@@ -233,6 +238,7 @@ router.post('/', requireAuth, requireOperator, (req, res) => {
   const date = m.date || new Date().toISOString()
 
   const createMovement = db.transaction(() => {
+    adjustmentIds = applyStockConfirmations(db, confirmations, req.user, date)
     db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(stockAfter, m.variationId)
     db.prepare(`INSERT INTO movements (id, type, variation_id, item_id, item_name, item_group, item_category, item_subcategory, item_unit, variation_values, variation_extras, qty, stock_before, stock_after, date, supplier, unit_cost, requested_by, requested_by_person_id, destination, doc_ref, note, operator_id, operator_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -244,7 +250,9 @@ router.post('/', requireAuth, requireOperator, (req, res) => {
       supplierValidation.supplier, unitCost, personValidation.requestedBy, personValidation.requestedByPersonId, destinationValidation.destination, m.docRef || '', m.note || '',
       operatorId, operatorName
     )
+    if (isStockAdjustment) confirmStockAdjustment(db, m.variationId, stockBefore, stockAfter, req.user, id)
   })
+  let adjustmentIds = []
   createMovement()
 
   res.json({
@@ -271,7 +279,9 @@ router.post('/', requireAuth, requireOperator, (req, res) => {
     docRef: m.docRef || '',
     note: m.note || '',
     operatorId,
-    operatorName
+    operatorName,
+    stockConfirmed: true,
+    adjustments: adjustmentIds.map(id => toMovement(db.prepare('SELECT * FROM movements WHERE id = ?').get(id)))
   })
 })
 
@@ -303,26 +313,16 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
     return res.status(400).json({ error: 'Informe ao menos um item.' })
   }
 
-  const liveStockByVariation = new Map()
-  const prepared = []
+  if (items.some(line => line.newCatalog) && req.user?.role !== 'admin') return res.status(403).json({ error: 'Somente administradores podem cadastrar itens pela movimentacao.' })
+  // Validate quantities before requesting a physical count.
+  if (items.some(line => !parsePositiveQty(line.qty))) return res.status(400).json({ error: 'Todos os itens do lote precisam de quantidade positiva.' })
+  const catalogs = new Map()
   const pendingCatalogNames = new Set()
-
-  for (const rawItem of items) {
-    const lineType = ['entrada', 'saida'].includes(rawItem.type) ? rawItem.type : type
-    if (!['entrada', 'saida'].includes(lineType)) {
-      return res.status(400).json({ error: 'Todos os itens do lote precisam de tipo entrada ou saida.' })
-    }
-    const qty = parsePositiveQty(rawItem.qty)
-    if (!qty) return res.status(400).json({ error: 'Todos os itens do lote precisam de quantidade positiva.' })
-
-    let item = rawItem
-    let variation
-    let newCatalog = null
+  for (const [lineIndex, rawItem] of items.entries()) {
     if (rawItem.newCatalog) {
-      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Somente administradores podem cadastrar itens pela movimentacao.' })
       const preparedCatalog = prepareNewCatalog(rawItem.newCatalog)
       if (preparedCatalog.error) return res.status(400).json({ error: preparedCatalog.error })
-      newCatalog = preparedCatalog.catalog
+      const newCatalog = preparedCatalog.catalog
       const duplicate = findDuplicateItem(newCatalog)
       if (duplicate) {
         return res.status(409).json({
@@ -336,6 +336,30 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
       }
       pendingCatalogNames.add(identity)
 
+      catalogs.set(lineIndex, newCatalog)
+    }
+  }
+  const confirmations = prepareStockConfirmations(db, items.map(line => ({ ...line, type: line.type || type })), req.body.stockCounts)
+
+  const liveStockByVariation = new Map()
+  const prepared = []
+
+  for (const [lineIndex, rawItem] of items.entries()) {
+    const lineType = ['entrada', 'saida'].includes(rawItem.type) ? rawItem.type : type
+    if (!['entrada', 'saida'].includes(lineType)) {
+      return res.status(400).json({ error: 'Todos os itens do lote precisam de tipo entrada ou saida.' })
+    }
+    const qty = parsePositiveQty(rawItem.qty)
+    if (!qty) return res.status(400).json({ error: 'Todos os itens do lote precisam de quantidade positiva.' })
+
+    let item = rawItem
+    let variation
+    let newCatalog = null
+    if (rawItem.newCatalog) {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Somente administradores podem cadastrar itens pela movimentacao.' })
+      newCatalog = catalogs.get(lineIndex)
+      const confirmation = confirmations.get(`new:${lineIndex}`)
+      if (confirmation) newCatalog.initialStock = confirmation.countedStock
       const itemId = 'item_' + crypto.randomBytes(6).toString('hex')
       const variationId = 'var_' + crypto.randomBytes(6).toString('hex')
       item = {
@@ -351,6 +375,7 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
         variationExtras: {},
       }
       variation = { stock: newCatalog.initialStock, item_id: itemId }
+      if (confirmation) confirmation.variationId = variationId
     } else {
       if (!rawItem.variationId || !rawItem.itemId) {
         return res.status(400).json({ error: 'Itens do lote precisam de variationId e itemId.' })
@@ -364,9 +389,9 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
 
     const stockBefore = liveStockByVariation.has(item.variationId)
       ? liveStockByVariation.get(item.variationId)
-      : variation.stock
+      : (confirmations.get(item.variationId)?.countedStock ?? variation.stock)
     const stockAfter = calculateStockAfter(lineType, stockBefore, qty)
-    if (stockAfter < 0) return res.status(400).json({ error: `Estoque insuficiente para ${item.itemName || 'item do lote'}.` })
+    if (!hasEnoughStock(lineType, stockBefore, qty)) return res.status(400).json({ error: `Estoque insuficiente para ${item.itemName || 'item do lote'}.` })
 
     const rawFields = {
       supplier: movementField(item, fields, 'supplier'),
@@ -417,21 +442,10 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
         VALUES (?, ?, ?, 0, 0, ?, '{}', '', '[]', '[]')`).run(
         line.item.variationId, line.item.itemId, JSON.stringify(catalog.values), catalog.initialStock
       )
-      if (catalog.initialStock > 0) {
-        initialMovements.push(insertBatchMovement({
-          type: 'entrada',
-          item: line.item,
-          qty: catalog.initialStock,
-          stockBefore: 0,
-          stockAfter: catalog.initialStock,
-          date,
-          docRef: 'AJUSTE',
-          note: 'Saldo ja existente informado no cadastro pela movimentacao por foto.',
-          operatorId,
-          operatorName,
-        }))
-      }
     }
+
+    const adjustmentIds = applyStockConfirmations(db, confirmations, req.user, date)
+    initialMovements.push(...adjustmentIds.map(id => toMovement(db.prepare('SELECT * FROM movements WHERE id = ?').get(id))))
 
     for (const [variationId, stock] of liveStockByVariation.entries()) {
       db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(stock, variationId)
@@ -441,7 +455,7 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
       const m = line.item
       const docRef = movementField(m, fields, 'docRef')
       const note = movementField(m, fields, 'note')
-      created.push(insertBatchMovement({
+      created.push({ ...insertBatchMovement({
         type: line.type,
         item: m,
         qty: line.qty,
@@ -457,7 +471,7 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
         note,
         operatorId,
         operatorName,
-      }))
+      }), stockConfirmed: true })
     }
 
     const response = { movements: created, initialMovements }
@@ -471,10 +485,32 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
   res.json({ movements: created, initialMovements })
 })
 
+// GET /api/movements/import-mappings
+router.get('/import-mappings', requireAuth, requireAdmin, (req, res) => {
+  res.json(db.prepare(`
+    SELECT name_key AS nameKey, source_name AS sourceName, variation_id AS variationId
+    FROM movement_import_mappings
+    ORDER BY source_name
+  `).all())
+})
+
+// POST /api/movements/import-history
+router.post('/import-history', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await createBackup(db)
+    res.json(importMovementHistory(db, req.body, req.user))
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message })
+    throw error
+  }
+})
+
 // PUT /api/movements/:id
 router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   const m = db.prepare('SELECT * FROM movements WHERE id = ?').get(req.params.id)
   if (!m) return res.status(404).json({ error: 'Movimentacao nao encontrada' })
+
+  if (db.prepare('SELECT 1 FROM stock_confirmations WHERE movement_id = ?').get(m.id)) return res.status(409).json({ error: 'A conferência inicial é um registro de auditoria. Registre um novo ajuste para corrigir o saldo.' })
 
   const changes = req.body
   const oldQty = m.qty
@@ -482,7 +518,7 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   if (!newQty) return res.status(400).json({ error: 'Quantidade deve ser positiva.' })
 
   let newStock = null
-  if (newQty !== oldQty) {
+  if (m.affects_stock !== 0 && newQty !== oldQty) {
     const variation = db.prepare('SELECT stock FROM variations WHERE id = ?').get(m.variation_id)
     if (variation) {
       const diff = newQty - oldQty
@@ -491,7 +527,9 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
     }
   }
 
-  const stockAfter = m.stock_before + (m.type === 'entrada' ? newQty : -newQty)
+  const stockAfter = m.affects_stock === 0
+    ? m.stock_after
+    : m.stock_before + (m.type === 'entrada' ? newQty : -newQty)
   const costValidation = changes.unitCost !== undefined ? parseOptionalCostStrict(changes.unitCost) : { ok: true, value: m.unit_cost }
   if (m.type === 'entrada' && !costValidation.ok) return res.status(400).json({ error: costValidation.error })
   const supplierValidation = m.type === 'entrada' && changes.supplier !== undefined
@@ -532,6 +570,7 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
       changes.note !== undefined ? changes.note : m.note,
       req.params.id
     )
+    db.prepare('UPDATE work_order_items SET qty = ? WHERE movement_id = ?').run(newQty, req.params.id)
   })
   updateMovement()
 
@@ -543,8 +582,9 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
 router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const m = db.prepare('SELECT * FROM movements WHERE id = ?').get(req.params.id)
   if (!m) return res.status(404).json({ error: 'Movimentacao nao encontrada' })
+  if (db.prepare('SELECT 1 FROM stock_confirmations WHERE movement_id = ?').get(m.id)) return res.status(409).json({ error: 'A conferência inicial é um registro de auditoria. Registre um novo ajuste para corrigir o saldo.' })
 
-  const variation = db.prepare('SELECT stock FROM variations WHERE id = ?').get(m.variation_id)
+  const variation = m.affects_stock === 0 ? null : db.prepare('SELECT stock FROM variations WHERE id = ?').get(m.variation_id)
   const newStock = variation
     ? (m.type === 'entrada' ? variation.stock - m.qty : variation.stock + m.qty)
     : null

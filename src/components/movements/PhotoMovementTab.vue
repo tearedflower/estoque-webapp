@@ -550,7 +550,7 @@ async function confirmBatch() {
     else {
       for (const movement of created) {
         const variation = variations.value.find(row => row.id === movement.variationId)
-        if (variation) variation.stock = movement.stockAfter
+        if (variation) { variation.stock = movement.stockAfter; variation.stockConfirmed = movement.stockConfirmed !== false }
       }
     }
     const completedAt = new Date()

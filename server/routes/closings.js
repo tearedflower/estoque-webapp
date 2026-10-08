@@ -90,7 +90,7 @@ function buildClosingData(year, month) {
       variationExtras: JSON.parse(variation.extras || '{}'),
       location: variation.location || '',
       destinations: JSON.parse(variation.destinations || '[]'),
-      minStock: variation.min_stock || 0,
+      minStock: variation.min_stock_defined ? variation.min_stock : null,
       stockMonthStart,
       stockAtClose,
       currentStock,

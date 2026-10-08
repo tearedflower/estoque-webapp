@@ -22,15 +22,18 @@ test('kit do cargo preserva quantidade e exige escolha quando ha varias variacoe
   const items = [
     { id: 'mask', name: 'Mascara', group: 'EPI' },
     { id: 'boot', name: 'Botina', group: 'EPI' },
+    { id: 'inactive', name: 'EPI inativo', group: 'EPI', active: false },
   ]
   const variations = [
     { id: 'mask_m', itemId: 'mask', values: { Tamanho: 'M' } },
     { id: 'mask_g', itemId: 'mask', values: { Tamanho: 'G' } },
     { id: 'boot_42', itemId: 'boot', values: { Tamanho: '42' } },
+    { id: 'inactive_1', itemId: 'inactive', values: {} },
   ]
   const rules = [
     { id: 'r1', targetType: 'item', targetKey: 'mask', targetLabel: 'Mascara', quantity: 4 },
     { id: 'r2', targetType: 'variacao', targetKey: 'boot_42', targetLabel: 'Botina 42', quantity: 1 },
+    { id: 'r3', targetType: 'item', targetKey: 'inactive', targetLabel: 'EPI inativo', quantity: 1 },
   ]
 
   assert.deepEqual(buildEpiKitRows(rules, items, variations), [

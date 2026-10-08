@@ -53,13 +53,13 @@ export function populateSeedData(db, data) {
 
   const insertItem = db.prepare(`
     INSERT OR REPLACE INTO items (
-      id, name, group_name, category, subcategory, unit, min_stock, attributes, location, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, name, group_name, category, subcategory, unit, min_stock, min_stock_defined, attributes, location, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertVariation = db.prepare(`
     INSERT OR REPLACE INTO variations (
-      id, item_id, vals, stock, min_stock, initial_stock, extras, location, locations, destinations, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, item_id, vals, stock, min_stock, min_stock_defined, initial_stock, extras, location, locations, destinations, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertMovement = db.prepare(`
     INSERT OR REPLACE INTO movements (
@@ -186,6 +186,7 @@ export function populateSeedData(db, data) {
       row.subcategory || null,
       row.unit || 'UN',
       row.minStock || 0,
+      row.minStock !== null && row.minStock !== undefined && String(row.minStock).trim() !== '' ? 1 : 0,
       JSON.stringify(row.attributes || []),
       row.location || '',
       row.active !== false ? 1 : 0
@@ -199,6 +200,7 @@ export function populateSeedData(db, data) {
       JSON.stringify(row.values || {}),
       stock,
       row.minStock || 0,
+      row.minStock !== null && row.minStock !== undefined && String(row.minStock).trim() !== '' ? 1 : 0,
       row.initialStock !== undefined ? row.initialStock : stock,
       JSON.stringify(row.extras || {}),
       row.location || '',

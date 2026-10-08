@@ -15,7 +15,7 @@ export const DB_PATH = process.env.DB_PATH
 
 mkdirSync(dirname(DB_PATH), { recursive: true })
 
-const CURRENT_SCHEMA_VERSION = 5
+const CURRENT_SCHEMA_VERSION = 8
 const databaseExisted = existsSync(DB_PATH)
 const db = new Database(DB_PATH)
 const previousSchemaVersion = db.pragma('user_version', { simple: true })
@@ -55,6 +55,7 @@ db.exec(`
     subcategory TEXT,
     unit TEXT NOT NULL DEFAULT 'UN',
     min_stock REAL NOT NULL DEFAULT 0,
+    min_stock_defined INTEGER NOT NULL DEFAULT 0,
     attributes TEXT NOT NULL DEFAULT '[]',
     location TEXT DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1
@@ -66,6 +67,7 @@ db.exec(`
     vals TEXT NOT NULL DEFAULT '{}',
     stock REAL NOT NULL DEFAULT 0,
     min_stock REAL NOT NULL DEFAULT 0,
+    min_stock_defined INTEGER NOT NULL DEFAULT 0,
     initial_stock REAL NOT NULL DEFAULT 0,
     extras TEXT NOT NULL DEFAULT '{}',
     location TEXT DEFAULT '',
@@ -98,7 +100,18 @@ db.exec(`
     doc_ref TEXT DEFAULT '',
     note TEXT DEFAULT '',
     operator_id TEXT DEFAULT '',
-    operator_name TEXT DEFAULT ''
+    operator_name TEXT DEFAULT '',
+    affects_stock INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS stock_confirmations (
+    variation_id TEXT PRIMARY KEY REFERENCES variations(id) ON DELETE CASCADE,
+    previous_stock REAL NOT NULL,
+    counted_stock REAL NOT NULL CHECK(counted_stock >= 0),
+    confirmed_at TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    operator_name TEXT NOT NULL,
+    movement_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS movement_batch_requests (
@@ -106,6 +119,13 @@ db.exec(`
     user_id TEXT NOT NULL,
     response_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS movement_import_mappings (
+    name_key TEXT PRIMARY KEY,
+    source_name TEXT NOT NULL,
+    variation_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS photo_batches (
@@ -182,6 +202,11 @@ db.exec(`
     name TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS epi_role_rules (
@@ -341,7 +366,14 @@ if (!movCols.includes('unit_cost')) {
 if (!movCols.includes('requested_by_person_id')) {
   db.prepare("ALTER TABLE movements ADD COLUMN requested_by_person_id TEXT DEFAULT ''").run()
 }
+if (!movCols.includes('affects_stock')) {
+  db.prepare('ALTER TABLE movements ADD COLUMN affects_stock INTEGER NOT NULL DEFAULT 1').run()
+}
 const variationCols = db.prepare("PRAGMA table_info(variations)").all().map(c => c.name)
+if (!variationCols.includes('min_stock_defined')) {
+  db.prepare('ALTER TABLE variations ADD COLUMN min_stock_defined INTEGER NOT NULL DEFAULT 0').run()
+  db.prepare('UPDATE variations SET min_stock_defined = 1 WHERE min_stock > 0').run()
+}
 if (!variationCols.includes('locations')) {
   db.prepare("ALTER TABLE variations ADD COLUMN locations TEXT NOT NULL DEFAULT '[]'").run()
   const legacyLocations = db.prepare("SELECT id, location FROM variations WHERE COALESCE(location, '') <> ''").all()
@@ -355,6 +387,10 @@ if (!variationCols.includes('active')) {
 }
 
 const itemCols = db.prepare("PRAGMA table_info(items)").all().map(c => c.name)
+if (!itemCols.includes('min_stock_defined')) {
+  db.prepare('ALTER TABLE items ADD COLUMN min_stock_defined INTEGER NOT NULL DEFAULT 0').run()
+  db.prepare('UPDATE items SET min_stock_defined = 1 WHERE min_stock > 0').run()
+}
 if (!itemCols.includes('active')) {
   db.prepare("ALTER TABLE items ADD COLUMN active INTEGER NOT NULL DEFAULT 1").run()
 }

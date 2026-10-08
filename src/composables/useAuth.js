@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import * as api from '../services/api.js'
 
-const user = ref(JSON.parse(localStorage.getItem('auth_user') || sessionStorage.getItem('auth_user') || 'null'))
+const user = ref(null)
 
 export function useAuth() {
   const isAdmin = computed(() => user.value?.role === 'admin')

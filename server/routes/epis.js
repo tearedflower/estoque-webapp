@@ -22,7 +22,7 @@ function toRule(row) {
     targetType: row.target_type,
     targetKey: row.target_key,
     targetLabel: row.target_label || '',
-    days: Number(row.days || 30),
+    days: Number(row.days ?? 30),
     quantity: Number(row.quantity || 1),
     active: !!row.active,
   }
@@ -50,7 +50,7 @@ router.post('/role-rules', requireAuth, requireAdmin, (req, res) => {
   const target = cleanTarget(req.body)
   if (target.error) return res.status(400).json({ error: target.error })
   const days = Number(req.body.days ?? 30)
-  if (!Number.isInteger(days) || days <= 0) return res.status(400).json({ error: 'Periodicidade deve ser maior que zero.' })
+  if (!Number.isInteger(days) || days < 0) return res.status(400).json({ error: 'Periodicidade deve ser zero ou maior.' })
   const quantity = Number(req.body.quantity ?? 1)
   if (!Number.isInteger(quantity) || quantity <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' })
 
@@ -80,8 +80,8 @@ router.put('/role-rules/:id', requireAuth, requireAdmin, (req, res) => {
     targetLabel: req.body.targetLabel ?? current.target_label,
   })
   if (target.error) return res.status(400).json({ error: target.error })
-  const days = req.body.days !== undefined ? Number(req.body.days) : Number(current.days || 30)
-  if (!Number.isInteger(days) || days <= 0) return res.status(400).json({ error: 'Periodicidade deve ser maior que zero.' })
+  const days = req.body.days !== undefined ? Number(req.body.days) : Number(current.days ?? 30)
+  if (!Number.isInteger(days) || days < 0) return res.status(400).json({ error: 'Periodicidade deve ser zero ou maior.' })
   const quantity = req.body.quantity !== undefined ? Number(req.body.quantity) : Number(current.quantity || 1)
   if (!Number.isInteger(quantity) || quantity <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' })
 

@@ -4,6 +4,7 @@ import { PERSON_STATUSES, formatRoleName, personStatusLabel, usePeople } from '.
 import { useRoles } from '../../composables/useRoles.js'
 import { useToast } from '../../composables/useToast.js'
 import { parsePeopleCsv } from '../../utils/peopleCsv.js'
+import * as api from '../../services/api.js'
 import RolesTab from './RolesTab.vue'
 
 const props = defineProps({
@@ -40,6 +41,8 @@ const csvImporting = ref(false)
 const csvImportSummary = ref('')
 const bulkDeleting = ref(false)
 const personSaving = ref(false)
+const syncStatus = ref(null)
+const syncSaving = ref(false)
 const personStatusFilterLabels = {
   ativo: 'Ativas',
   inativo: 'Inativas',
@@ -90,6 +93,37 @@ watch(people, () => {
 watch(totalPages, total => {
   if (currentPage.value > total) currentPage.value = total
 })
+watch(isDev, async value => {
+  if (!value) return
+  try { syncStatus.value = await api.getPeopleRoleSync() } catch { syncStatus.value = null }
+}, { immediate: true })
+
+async function togglePeopleRoleSync() {
+  if (syncSaving.value) return
+  syncSaving.value = true
+  try {
+    const next = !syncStatus.value?.enabled
+    syncStatus.value = await api.updatePeopleRoleSync(next)
+    success(next ? 'Sincronizacao de pessoas e cargos ativada.' : 'Sincronizacao desativada.')
+  } catch (cause) {
+    error(cause.message || 'Nao foi possivel alterar a sincronizacao.')
+  } finally {
+    syncSaving.value = false
+  }
+}
+
+async function syncPeopleRolesNow() {
+  if (syncSaving.value) return
+  syncSaving.value = true
+  try {
+    syncStatus.value = await api.runPeopleRoleSync()
+    success('Pessoas e cargos sincronizados com o PROD.')
+  } catch (cause) {
+    error(cause.message || 'Nao foi possivel sincronizar pessoas e cargos.')
+  } finally {
+    syncSaving.value = false
+  }
+}
 
 function startAddPerson() { addingPerson.value = true; newPersonName.value = ''; newPersonRole.value = ''; newPersonRegistration.value = ''; newPersonStatus.value = 'ativo' }
 function cancelAddPerson() { addingPerson.value = false }
@@ -277,6 +311,17 @@ function personStatusClass(person) {
   <div>
     <div class="w-full">
       <p v-if="csvImportSummary" class="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">{{ csvImportSummary }}</p>
+      <div v-if="isDev && syncStatus?.available" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+        <div>
+          <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">Sincronizar pessoas e cargos com o PROD</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Quando ativo, alterações feitas no DEV são enviadas após um backup automático.</p>
+          <p v-if="syncStatus.lastError" class="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{{ syncStatus.lastError }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button v-if="syncStatus.enabled" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800" :disabled="syncSaving" @click="syncPeopleRolesNow">Sincronizar agora</button>
+          <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50" :class="syncStatus.enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'" :disabled="syncSaving" :aria-pressed="syncStatus.enabled" @click="togglePeopleRoleSync">{{ syncStatus.enabled ? 'Ativada' : 'Desativada' }}</button>
+        </div>
+      </div>
 
       <template v-if="peopleSection === 'funcionarios'">
       <div class="ds-toolbar mb-4 justify-between">
@@ -431,11 +476,11 @@ function personStatusClass(person) {
             {{ bulkDeleting ? 'Removendo...' : 'Excluir selecionadas' }}
           </button>
         </div>
-        <table v-if="filteredPeople.length" class="ds-table min-w-[40rem]">
+        <table v-if="filteredPeople.length" class="ds-table table-fixed min-w-[40rem]">
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-              <th class="text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Nome</th>
-              <th class="text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Matrícula</th>
+              <th class="w-[34%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Nome</th>
+              <th class="w-[14%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Matrícula</th>
               <th class="text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Cargo</th>
               <th class="text-center px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-24">Status</th>
               <th class="px-4 py-2.5 text-center font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-36">Ações</th>
@@ -453,25 +498,25 @@ function personStatusClass(person) {
             >
               <!-- Editing row -->
               <template v-if="editingPersonId === p.id">
-                <td class="px-4 py-2">
+                <td class="px-4 py-3">
                   <input v-model="editPersonName" class="w-full px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none" @keydown.enter="confirmEditPerson" @keydown.escape="cancelEditPerson" autofocus />
                 </td>
-                <td class="px-4 py-2">
+                <td class="px-4 py-3">
                   <input v-model="editPersonRegistration" placeholder="Opcional" class="w-full px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none" @keydown.enter="confirmEditPerson" @keydown.escape="cancelEditPerson" />
                 </td>
-                <td class="px-4 py-2">
+                <td class="px-4 py-3">
                   <select v-if="activeRoles.length" v-model="editPersonRole" class="w-full px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
                     <option value="">— Sem cargo —</option>
                     <option v-for="r in activeRoles" :key="r.id" :value="r.name">{{ r.name }}</option>
                   </select>
                   <span v-else class="text-xs text-gray-400 dark:text-gray-500 italic">Sem cargos cadastrados</span>
                 </td>
-                <td class="px-4 py-2">
+                <td class="px-4 py-3">
                   <select v-model="editPersonStatus" class="w-full px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
                     <option v-for="status in PERSON_STATUSES" :key="status.id" :value="status.id">{{ status.label }}</option>
                   </select>
                 </td>
-                <td class="px-4 py-2">
+                <td class="px-4 py-3">
                   <div class="flex items-center justify-center gap-1">
                     <button class="p-1 text-green-500 hover:text-green-600 disabled:opacity-40 disabled:cursor-not-allowed" title="Salvar" :disabled="!canEditPerson" @click="confirmEditPerson">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>

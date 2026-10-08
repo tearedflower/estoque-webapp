@@ -31,14 +31,19 @@ export function catalogRowsForTarget(items, variations, target) {
   const itemById = new Map(items.map(item => [item.id, item]))
   return variations
     .map(variation => ({ variation, item: itemById.get(variation.itemId) }))
-    .filter(row => row.item && targetMatchesCatalogRow(target, row.item, row.variation))
+    .filter(row =>
+      row.item?.active !== false &&
+      row.variation.active !== false &&
+      targetMatchesCatalogRow(target, row.item, row.variation)
+    )
 }
 
 export function buildEpiKitRows(rules, items, variations) {
-  return rules.map(rule => {
+  return rules.flatMap(rule => {
     const candidates = catalogRowsForTarget(items, variations, rule)
+    if (!candidates.length) return []
     const selected = candidates.length === 1 ? candidates[0] : null
-    return {
+    return [{
       id: `rule:${rule.id}`,
       ruleId: rule.id,
       targetType: rule.targetType,
@@ -47,7 +52,7 @@ export function buildEpiKitRows(rules, items, variations) {
       quantity: Number(rule.quantity || 1),
       itemId: selected?.item.id || '',
       variationId: selected?.variation.id || '',
-    }
+    }]
   })
 }
 

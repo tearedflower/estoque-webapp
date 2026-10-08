@@ -17,8 +17,8 @@ O projeto usa um frontend em Vue 3 com Vite e uma API Express com SQLite. O foco
 
 O projeto usa arquivos `.env` para separar banco de desenvolvimento e produção.
 
-- `.env.dev`: banco de desenvolvimento.
-- `.env.prod`: banco de produção.
+- `.env.dev`: banco de desenvolvimento, API na porta 3001.
+- `.env.prod`: banco de produção, servidor na porta 3000.
 - `.env.example`: modelo versionado.
 
 Scripts úteis:
@@ -68,6 +68,8 @@ Acesse:
 http://localhost:5173
 ```
 
+O frontend de desenvolvimento encaminha as chamadas para a API na porta 3001. O acesso direto em `http://localhost:3001` também utiliza o banco DEV, servindo a última compilação disponível. Produção fica em `http://localhost:3000`.
+
 ### Desenvolvimento + produção local
 
 ```powershell
@@ -98,6 +100,31 @@ O estado básico do servidor também pode ser consultado em:
 ```text
 GET /api/health
 ```
+
+### Importar a planilha do almoxarifado
+
+A importação reutiliza as associações salvas, preserva os ajustes manuais e cria backup antes de gravar.
+Datas do Excel sem horário são interpretadas como dias de São Paulo. Quantidade positiva, data e nome
+do produto são obrigatórios; linhas incompletas ficam no relatório, sem inventar produtos ou saldos.
+
+```powershell
+# Simular no banco escolhido e gerar relatório, sem confirmar as mudanças
+npm run import:workbook -- --env=.env.dev --file="C:\caminho\Controle de Estoque - Almoxarifado.xlsm" --report="server/backups/previa.json"
+
+# Aplicar após a conferência. --update-existing permite corrigir linhas já importadas.
+npm run import:workbook -- --env=.env.dev --file="C:\caminho\Controle de Estoque - Almoxarifado.xlsm" --apply --update-existing --report="server/backups/importacao.json"
+```
+
+Produtos sem associação exigem cadastro/associação pela interface ou um plano JSON fornecido por
+`--catalog=caminho.json`. O plano contém `sourceName`, `itemId` e `values`; para um novo modelo,
+substitua `itemId` por `name`, `group`, `category`, `subcategory` e `unit`. `extras` é opcional.
+`remap: true` corrige uma associação existente após revisão. A gravação do catálogo e das
+movimentações ocorre na mesma transação. Uma repetição sem mudanças não duplica os registros.
+
+A identidade histórica usa aba e número da linha da planilha única do almoxarifado. Linhas alteradas
+são bloqueadas por padrão; habilite a atualização somente após conferir a versão da planilha.
+Linhas removidas do arquivo não apagam o histórico já gravado. Arquivos independentes exigem
+uma identificação de origem própria antes de usar este importador.
 
 ### Inicialização automática no Windows
 
@@ -173,6 +200,7 @@ O sistema exige a troca de `admin123` antes de liberar ações protegidas.
 - Cadastro e edição de hierarquia, incluindo adicionar, renomear e excluir atributos dos modelos.
 - Inventário com tabela, filtros, estoque mínimo, ajustes e ficha operacional da variação.
 - Entrada e saída de materiais com lote de movimentações e sugestão editável baseada na última movimentação relevante.
+- Importação administrativa de planilhas `.xlsx`/`.xlsm`, com associação por nome, cadastro inativo de ex-funcionários, recálculo do saldo pelo histórico e importação da quantidade mínima de `CADASTROS`, distinguindo vazio de zero.
 - Histórico de movimentações com busca única e filtros.
 - Resumo por destino em blocos hierárquicos.
 - Fechamento mensal com prévia, revisão de inconsistências, substituição controlada e exportação CSV.
@@ -250,6 +278,16 @@ src/
     MotoresView.vue
     CadastrosView.vue
 ```
+
+## Conferência na primeira movimentação
+
+A partir da ativação em 30/09/2026, cada variação exige uma contagem física **antes** da primeira nova movimentação, mesmo que já tenha histórico importado. A confirmação fica gravada no banco e não é repetida nos próximos dias nem após reiniciar o sistema.
+
+Ao confirmar, o sistema registra a diferença como uma entrada ou saída com a referência `CONFERÊNCIA INICIAL`, preserva o operador e salva o ajuste junto da movimentação em uma única transação. Contagem igual ao saldo (inclusive zero) também marca a variação como conferida, sem criar movimento de quantidade zero. Cancelar ou falhar a gravação não altera o saldo nem conclui a conferência.
+
+A regra abrange movimentação individual, lote rápido, fotos, entregas de EPI e materiais adicionados por ordem de serviço. No lote, cada variação é contada uma vez antes de todas as suas linhas. Novos produtos cadastrados por foto também exigem contagem explícita. Importação de histórico não confirma estoque físico. Um saldo antigo zero ou negativo não bloqueia o acesso à conferência; depois dela, saídas continuam limitadas à quantidade disponível.
+
+Os ajustes de conferência são registros de auditoria e não podem ser editados ou excluídos. Correções posteriores devem ser feitas por novo ajuste. O registro da contagem fica em `stock_confirmations`, com saldo anterior, quantidade contada, data e operador. A migração cria backup antes de atualizar um banco existente.
 
 ## Scripts
 

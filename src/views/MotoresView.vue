@@ -926,7 +926,7 @@ function workOrderEndLabel(order) {
                 <span class="font-semibold" :class="variation.stock <= 0 ? 'text-red-500' : 'text-green-500'">{{ variation.stock }}</span>
                 <span class="ml-1 text-xs text-gray-400">{{ item.unit }}</span>
               </td>
-              <td class="px-4 py-3 text-center tabular-nums text-gray-700 dark:text-gray-300">{{ variation.minStock ?? 0 }}</td>
+              <td class="px-4 py-3 text-center tabular-nums text-gray-700 dark:text-gray-300">{{ variation.minStock ?? '—' }}</td>
               <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ material.note || '-' }}</td>
               <td v-if="isAdmin" class="px-4 py-3 text-right">
                 <AppButton variant="danger" size="xs" @click="deleteMotorMaterial(material)">Remover</AppButton>
@@ -981,7 +981,7 @@ function workOrderEndLabel(order) {
                 </span>
                 <span class="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
                   <span class="block font-semibold" :class="row.variation.stock <= 0 ? 'text-red-500' : 'text-green-500'">{{ row.variation.stock }} {{ row.item.unit }}</span>
-                  <span>min. {{ row.variation.minStock ?? 0 }}</span>
+                  <span>min. {{ row.variation.minStock ?? '—' }}</span>
                 </span>
               </button>
               <p v-if="!motorMaterialOptions.length" class="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">

@@ -6,8 +6,56 @@ import { buildGlobalSearchResults, filterDestinations, findExactDestination, mat
 import { failedSourceNames } from '../src/utils/sync.js'
 import { destinationDescendants, destinationMoveError, sortDestinationsByOrder } from '../src/composables/useDestinations.js'
 import { buildMotorDestinationTree, motorMatchesIdentity, motorMatchesSearch, motorOpenEventLabel } from '../src/composables/useMotors.js'
-import { stockAlertTransition } from '../src/composables/useItems.js'
-import { useMovementHistory } from '../src/composables/useMovementHistory.js'
+import { stockAlertStatus, stockAlertTransition } from '../src/composables/useItems.js'
+import { useMovementHistory, searchHistoryFacets } from '../src/composables/useMovementHistory.js'
+
+test('additional history filters can be found by label or value without changing selections', () => {
+  const facets = [
+    { key: 'attr_Bico', label: 'Bico', selected: ['Composite'], options: [{ value: 'Composite', count: 4 }, { value: 'Aço', count: 2 }] },
+    { key: 'attr_Marca', label: 'Marca', selected: [], options: [{ value: 'Volk', count: 3 }] },
+  ]
+  assert.equal(searchHistoryFacets(facets, ''), facets)
+  assert.deepEqual(searchHistoryFacets(facets, 'bico'), [facets[0]])
+  const found = searchHistoryFacets(facets, ' ACO ')
+  assert.deepEqual(found[0].options, [{ value: 'Aço', count: 2 }])
+  assert.deepEqual(found[0].selected, ['Composite'])
+  assert.equal(facets[0].options.length, 2)
+  assert.deepEqual(searchHistoryFacets(facets, 'inexistente'), [])
+})
+
+test('history search reuses normalized records and keeps contextual facet counts correct', () => {
+  let reads = 0
+  const note = { toString: () => { reads++; return 'Conferência'; } }
+  const movements = ref([
+    { id: 'a', type: 'entrada', itemName: 'Bóta', requestedBy: 'Ana', qty: 2, date: '2026-09-01', note, variationValues: { Bico: 'Composite' } },
+    { id: 'b', type: 'saida', itemName: 'Bota', requestedBy: 'Ana', qty: 1, date: '2026-09-02', note, variationValues: { Bico: 'Aço' } },
+    { id: 'c', type: 'entrada', itemName: 'Bota', requestedBy: 'Bia', qty: 3, date: '2026-09-03', note, variationValues: { Bico: 'Aço' } },
+  ])
+  const h = useMovementHistory(movements)
+  h.clearHistFilters()
+  for (const term of ['b', 'bo', 'bot', 'bota', 'conferencia']) {
+    h.histSearch.value = term
+    assert.equal(h.filteredMovements.value.length, 3)
+    assert.equal(h.histFacets.value.find(f => f.key === 'tipo').options.find(o => o.value === 'Entrada').count, 2)
+    assert.equal(h.histTotals.value.entradas, 5)
+  }
+  assert.equal(reads, 3, 'Typing must not renormalize every record for every facet.')
+  h.toggleHistFilter('responsavel', 'Ana')
+  h.toggleHistFilter('tipo', 'Entrada')
+  assert.deepEqual(h.filteredMovements.value.map(m => m.id), ['a'])
+  const options = key => Object.fromEntries(h.histFacets.value.find(f => f.key === key).options.map(o => [o.value, o.count]))
+  assert.deepEqual(options('tipo'), { Entrada: 1, Saída: 1 })
+  assert.deepEqual(options('responsavel'), { Ana: 1, Bia: 1 })
+  assert.deepEqual(options('attr_Bico'), { Composite: 1 })
+  movements.value[0].itemName = 'Parafuso'
+  h.histSearch.value = 'bota'
+  assert.equal(h.filteredMovements.value.length, 0)
+  assert.deepEqual(options('tipo'), { Saída: 1, Entrada: 0 })
+  h.clearHistFilters()
+  movements.value[1].variationValues.Bico = 'Composite'
+  h.toggleHistFilter('attr_Bico', 'Composite')
+  assert.deepEqual(h.filteredMovements.value.map(m => m.id), ['a', 'b'])
+})
 import { getDestinationFullName } from '../server/utils/destinations.js'
 import { formatPartialOrderDate, workOrderCreationDateError } from '../src/utils/workOrderForm.js'
 import { workOrderMaintenanceKindLabel, workOrderMaintenanceSearchParts } from '../src/utils/workOrderSearch.js'
@@ -29,9 +77,9 @@ test('destination order preserves manual positions and sorts new entries', () =>
 })
 
 test('movement history paginates and restores saved filters', async () => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
   const storage = new Map()
-  Object.defineProperty(globalThis, 'localStorage', {
+  Object.defineProperty(globalThis, 'sessionStorage', {
     configurable: true,
     value: {
       getItem: key => storage.get(key) ?? null,
@@ -64,20 +112,28 @@ test('movement history paginates and restores saved filters', async () => {
     assert.equal(restored.histDateFrom.value, '2026-01-10')
     assert.equal(restored.filteredMovements.value.every(movement => movement.type === 'entrada'), true)
     assert.equal(restored.historyPageSize.value, 50)
+    restored.clearHistFilters()
+    movements.value = [
+      { id: 'last-minute', date: new Date(2026, 8, 30, 23, 59).toISOString() },
+      { id: 'next-day', date: new Date(2026, 9, 1, 0, 0).toISOString() },
+    ]
+    restored.histDateFrom.value = '2026-09-30'
+    restored.histDateTo.value = '2026-09-30'
+    assert.deepEqual(restored.filteredMovements.value.map(row => row.id), ['last-minute'])
   } finally {
-    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
-    else delete globalThis.localStorage
+    if (descriptor) Object.defineProperty(globalThis, 'sessionStorage', descriptor)
+    else delete globalThis.sessionStorage
   }
 })
 
 test('variation form helpers preserve catalog behavior', () => {
   const item = { attributes: ['Cor'], minStock: 2, location: 'A1' }
   assert.deepEqual(variationFormForItem(item), {
-    values: { Cor: '' }, stock: 0, minStock: 0, extrasList: [], location: '', locations: [], destinations: [],
+    values: { Cor: '' }, stock: 0, minStock: null, extrasList: [], location: '', locations: [], destinations: [],
   })
   assert.deepEqual(
     variationFormForEdit(item, { values: { Cor: 'Azul' }, stock: 3, extras: { Marca: 'X' }, destinations: [4] }),
-    { values: { Cor: 'Azul' }, stock: 3, minStock: 0, extrasList: [{ key: 'Marca', value: 'X' }], location: 'A1', locations: ['A1'], destinations: [4] }
+    { values: { Cor: 'Azul' }, stock: 3, minStock: null, extrasList: [{ key: 'Marca', value: 'X' }], location: 'A1', locations: ['A1'], destinations: [4] }
   )
   assert.deepEqual(variationFormForEdit(item, { values: {}, stock: 1, location: 'B2' }).locations, ['B2'])
   assert.deepEqual(variationFormForEdit(item, { values: {}, stock: 1, locations: ['A1', 'A2'] }).locations, ['A1', 'A2'])
@@ -91,7 +147,7 @@ test('variation setup reports only missing operational fields', () => {
   assert.deepEqual(variationSetupIssues(
     { location: 'Prateleira A' },
     { minStock: 0, locations: [], destinations: [] },
-  ), ['minStock', 'destination'])
+  ), ['destination'])
   assert.deepEqual(variationSetupIssues(
     {},
     { minStock: 2, locations: ['Prateleira B'], destinations: ['Máquina 1'] },
@@ -102,6 +158,8 @@ test('stock alert transition only fires when saída enters a bad stock band', ()
   const item = { unit: 'UN' }
   const variation = { minStock: 5, stock: 10 }
 
+  assert.equal(stockAlertStatus({ minStock: 0, stock: 0 }, item), 'ok')
+  assert.equal(stockAlertStatus({ minStock: 0, stock: -1 }, item), 'zero')
   assert.equal(stockAlertTransition({ type: 'saida', stockBefore: 12, stockAfter: 8 }, variation, item), 'alert')
   assert.equal(stockAlertTransition({ type: 'saida', stockBefore: 8, stockAfter: 4 }, variation, item), 'critical')
   assert.equal(stockAlertTransition({ type: 'saida', stockBefore: 4, stockAfter: 0 }, variation, item), 'zero')

@@ -1222,7 +1222,7 @@ async function removeMaterialFromDestination(variation) {
                 </div>
                 <div class="text-right flex-shrink-0">
                   <p class="text-xs text-gray-400 dark:text-gray-500">Min.</p>
-                  <p class="text-sm font-semibold tabular-nums text-gray-800 dark:text-gray-100">{{ variation.minStock || 0 }}</p>
+                  <p class="text-sm font-semibold tabular-nums text-gray-800 dark:text-gray-100">{{ variation.minStock ?? '—' }}</p>
                 </div>
                 <button
                   v-if="isLoggedIn && isManualMaterialLinked(variation)"
@@ -1516,7 +1516,7 @@ async function removeMaterialFromDestination(variation) {
                   Estoque {{ variation.stock }}
                 </span>
                 <span
-                  v-if="variation.minStock"
+                  v-if="variation.minStock !== null && variation.minStock !== undefined"
                   class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
                 >
                   Min. {{ variation.minStock }}

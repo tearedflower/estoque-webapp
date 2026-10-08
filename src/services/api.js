@@ -1,3 +1,5 @@
+import { requestStockCounts, stockConfirmationRevision } from '../composables/useStockConfirmation.js'
+
 const BASE = '/api'
 
 function setAuthData(user) {
@@ -21,7 +23,7 @@ function apiError(response, data = {}) {
   return error
 }
 
-async function request(path, options = {}) {
+async function request(path, options = {}, allowStockConfirmation = true) {
   const url = BASE + path
   const headers = {
     ...options.headers
@@ -39,6 +41,13 @@ async function request(path, options = {}) {
   }
 
   const data = await res.json().catch(() => ({}))
+
+  if (res.status === 409 && data.code === 'STOCK_CONFIRMATION_REQUIRED' && allowStockConfirmation) {
+    const stockCounts = await requestStockCounts(data.confirmations)
+    const result = await request(path, { ...options, body: JSON.stringify({ ...JSON.parse(options.body), stockCounts }) }, false)
+    stockConfirmationRevision.value++
+    return result
+  }
 
   if (!res.ok) throw apiError(res, data)
 
@@ -128,6 +137,10 @@ export async function updateVariation(id, data) {
   return request(`/items/variations/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
+export async function updateVariationsBulk(ids, change) {
+  return request('/items/variations/bulk', { method: 'PUT', body: JSON.stringify({ ids, change }) })
+}
+
 export async function deleteVariation(id) {
   return request(`/items/variations/${id}`, { method: 'DELETE' })
 }
@@ -143,6 +156,14 @@ export async function createMovement(data) {
 
 export async function createMovementBatch(data) {
   return request('/movements/batch', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function getMovementImportMappings() {
+  return request('/movements/import-mappings')
+}
+
+export async function importMovementHistory(data) {
+  return request('/movements/import-history', { method: 'POST', body: JSON.stringify(data) })
 }
 
 // ===== Photo movement batches =====
@@ -257,6 +278,18 @@ export async function updatePerson(id, data) {
 
 export async function deletePerson(id) {
   return request(`/people/${id}`, { method: 'DELETE' })
+}
+
+export async function getPeopleRoleSync() {
+  return request('/people-role-sync')
+}
+
+export async function updatePeopleRoleSync(enabled) {
+  return request('/people-role-sync', { method: 'PUT', body: JSON.stringify({ enabled }) })
+}
+
+export async function runPeopleRoleSync() {
+  return request('/people-role-sync/run', { method: 'POST' })
 }
 
 // ===== Suppliers =====

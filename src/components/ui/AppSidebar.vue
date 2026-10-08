@@ -6,7 +6,8 @@ defineProps({
   activeGroup: { type: String, default: null },
   facets: { type: Array, default: () => [] },
   hasActiveFilters: { type: Boolean, default: false },
-  search: { type: String, default: '' }
+  search: { type: String, default: '' },
+  showSearch: { type: Boolean, default: true },
 })
 
 defineEmits(['close', 'select-group', 'toggle-filter', 'clear-filters', 'update:search', 'search-submit'])
@@ -52,7 +53,7 @@ function toggleSection(key) {
       </button>
 
       <!-- Search -->
-      <div class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
+      <div v-if="showSearch" class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
         <div class="relative">
           <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
@@ -107,7 +108,7 @@ function toggleSection(key) {
       </div>
 
       <!-- Search -->
-      <div class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
+      <div v-if="showSearch" class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
         <div class="relative">
           <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />

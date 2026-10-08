@@ -274,7 +274,7 @@ async function registerAndPrint() {
 
     for (const movement of created) {
       const variation = variationById.value.get(movement.variationId)
-      if (variation) variation.stock = movement.stockAfter
+      if (variation) { variation.stock = movement.stockAfter; variation.stockConfirmed = movement.stockConfirmed !== false }
     }
     success(`${created.length} saída(s) de EPI registrada(s).`)
     await nextTick()

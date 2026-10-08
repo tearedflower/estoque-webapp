@@ -9,10 +9,13 @@ import * as api from '../services/api.js'
  * 'ok'       — no issue
  */
 export function stockAlertStatus(variation, item) {
-  const min = variation.minStock ?? 0
-  if (variation.stock <= 0) return 'zero'
-  if (min > 0 && variation.stock <= min) return 'critical'
-  if (min > 0 && variation.stock <= min * 2) return 'alert'
+  const stock = Number(variation.stock || 0)
+  const min = Number(variation.minStock || 0)
+  if (stock < 0) return 'zero'
+  if (min <= 0) return 'ok'
+  if (stock === 0) return 'zero'
+  if (stock <= min) return 'critical'
+  if (stock <= min * 2) return 'alert'
   return 'ok'
 }
 
@@ -150,6 +153,11 @@ function _sanitizeNumber(val, min = 0) {
   return Math.max(min, Math.round(n))
 }
 
+function _sanitizeOptionalNumber(val) {
+  if (val === null || val === undefined || String(val).trim() === '') return null
+  return _sanitizeNumber(val)
+}
+
 /**
  * Checks if a variation with the exact same attribute values already exists
  * for the given item. Optionally excludes one variation id (for edits).
@@ -218,7 +226,7 @@ export function useItems() {
         category: data.category || null,
         subcategory: data.subcategory || null,
         unit: data.unit || 'UN',
-        minStock: _sanitizeNumber(data.minStock),
+        minStock: _sanitizeOptionalNumber(data.minStock),
         attributes: data.attributes || [],
         location: data.location || ''
       })
@@ -233,7 +241,7 @@ export function useItems() {
   async function editItem(id, changes) {
     const item = items.value.find(i => i.id === id)
     if (!item) return { ok: false, error: 'Item não encontrado.' }
-    if (changes.minStock !== undefined) changes.minStock = _sanitizeNumber(changes.minStock)
+    if (changes.minStock !== undefined) changes.minStock = _sanitizeOptionalNumber(changes.minStock)
     const merged = { ...item, ...changes }
     const duplicate = _findDuplicateItem(merged, id)
     if (duplicate) {
@@ -266,7 +274,7 @@ export function useItems() {
    */
   async function addVariation(itemId, values = {}, stock = 0, minStock = null, extras = {}, location = '', destinations = []) {
     const sanitizedStock = _sanitizeNumber(stock)
-    const sanitizedMinStock = _sanitizeNumber(minStock ?? 0)
+    const sanitizedMinStock = _sanitizeOptionalNumber(minStock)
     if (_hasDuplicateVariation(itemId, values)) {
       return { ok: false, error: 'Já existe uma variação com esses mesmos atributos.' }
     }
@@ -288,16 +296,18 @@ export function useItems() {
   async function editVariation(id, changes) {
     const v = variations.value.find(v => v.id === id)
     if (!v) return { ok: false, error: 'Variação não encontrada.' }
+    const targetItemId = changes.itemId || v.itemId
     if (changes.values !== undefined) {
-      if (_hasDuplicateVariation(v.itemId, changes.values, id)) {
+      if (_hasDuplicateVariation(targetItemId, changes.values, id)) {
         return { ok: false, error: 'Já existe uma variação com esses mesmos atributos.' }
       }
     }
     const updated = { ...v }
+    updated.itemId = targetItemId
     if (changes.values !== undefined) updated.values = { ...changes.values }
     if (changes.stock !== undefined) updated.stock = _sanitizeNumber(changes.stock)
     if (changes.initialStock !== undefined) updated.initialStock = _sanitizeNumber(changes.initialStock)
-    if (changes.minStock !== undefined) updated.minStock = _sanitizeNumber(changes.minStock)
+    if (changes.minStock !== undefined) updated.minStock = _sanitizeOptionalNumber(changes.minStock)
     if (changes.extras !== undefined) updated.extras = { ...changes.extras }
     if (changes.location !== undefined) updated.location = changes.location
     if (changes.locations !== undefined) {
@@ -309,6 +319,12 @@ export function useItems() {
     Object.assign(v, result)
     variations.value = sortVariations(variations.value)
     return { ok: true }
+  }
+
+  async function editVariationsBulk(ids, change) {
+    const result = await api.updateVariationsBulk(ids, change)
+    await loadData()
+    return result
   }
 
   async function deleteVariation(id) {
@@ -855,7 +871,7 @@ export function useItems() {
     // CRUD
     addItem, editItem, deleteItem, findDuplicateItem: _findDuplicateItem,
     // Variations
-    getVariationsForItem, addVariation, editVariation, deleteVariation, getTotalStock,
+    getVariationsForItem, addVariation, editVariation, editVariationsBulk, deleteVariation, getTotalStock,
     // Hierarchy lookups
     uniqueGroups, getCategoriesForGroup, getSubcategoriesForCategory,
     // Catalog tree

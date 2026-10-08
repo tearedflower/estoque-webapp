@@ -84,7 +84,7 @@ const OS_FILTER_STATE_KEY = computed(() => `estoque_os_filters_${props.mode || '
 
 function loadOsFilterState() {
   try {
-    return JSON.parse(localStorage.getItem(OS_FILTER_STATE_KEY.value) || '{}')
+    return JSON.parse(sessionStorage.getItem(OS_FILTER_STATE_KEY.value) || '{}')
   } catch {
     return {}
   }
@@ -166,7 +166,7 @@ watch(quickKeepValues, (keep) => {
 })
 
 watch([searchQuery, ordersStatusTab, motorFilterId, historyDateFrom, historyDateTo], () => {
-  localStorage.setItem(OS_FILTER_STATE_KEY.value, JSON.stringify({
+  sessionStorage.setItem(OS_FILTER_STATE_KEY.value, JSON.stringify({
     searchQuery: searchQuery.value,
     ordersStatusTab: ordersStatusTab.value,
     motorFilterId: motorFilterId.value,
@@ -1340,6 +1340,7 @@ const matParsedQty = computed(() => {
 const matExceedsStock = computed(() =>
   matParsedQty.value !== null &&
   matSelectedVariation.value !== null &&
+  matSelectedVariation.value.stockConfirmed !== false &&
   matParsedQty.value > matSelectedVariation.value.stock
 )
 
@@ -2376,6 +2377,7 @@ function matBackToStep2() {
     </div>
 
     <SectionTabs
+      route-tab="ordens"
       v-if="!createOnly"
       aria-label="Seções de ordens de serviço"
       :model-value="activeSubTab"

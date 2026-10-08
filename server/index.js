@@ -17,6 +17,7 @@ import destinationRoutes from './routes/destinations.js'
 import peopleRoutes from './routes/people.js'
 import supplierRoutes from './routes/suppliers.js'
 import roleRoutes from './routes/roles.js'
+import peopleRoleSyncRoutes from './routes/peopleRoleSync.js'
 import epiRoutes from './routes/epis.js'
 import seedRoutes from './routes/seed.js'
 import workOrderRoutes from './routes/workOrders.js'
@@ -78,6 +79,7 @@ app.use('/api/destinations', destinationRoutes)
 app.use('/api/people', peopleRoutes)
 app.use('/api/suppliers', supplierRoutes)
 app.use('/api/roles', roleRoutes)
+app.use('/api/people-role-sync', peopleRoleSyncRoutes)
 app.use('/api/epis', epiRoutes)
 app.use('/api/seed', seedRoutes)
 app.use('/api/work-orders', workOrderRoutes)

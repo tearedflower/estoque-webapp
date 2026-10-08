@@ -42,7 +42,8 @@ export function useMovements() {
     })
     // Update local variation stock from server response
     variation.stock = created.stockAfter
-    movements.value.unshift(created)
+    variation.stockConfirmed = true
+    movements.value.unshift(...(created.adjustments || []), created)
     return created
   }
 

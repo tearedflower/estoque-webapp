@@ -390,18 +390,35 @@ async function confirmRemoveAttr() {
 
 // ===== Item model editing =====
 const editingItemModel = ref(null)
+const editItemModelName = ref('')
 
 function startEditItemModel(item) {
   editingItemModel.value = item
+  editItemModelName.value = item.name
   cancelDelete()
   cancelMove()
 }
 
 function cancelEditItemModel() {
   editingItemModel.value = null
+  editItemModelName.value = ''
   cancelAttrEdit()
   cancelAddAttr()
   cancelRemoveAttr()
+}
+
+async function saveItemModelName() {
+  const item = editingItemModel.value
+  const name = editItemModelName.value.trim()
+  if (!item || !name || name === item.name) return
+  try {
+    const result = await editItem(item.id, { name })
+    if (!result?.ok) { error(result?.error || 'Não foi possível renomear o modelo.'); return }
+    editItemModelName.value = result.item.name
+    success(`Modelo renomeado para "${result.item.name}".`)
+  } catch (cause) {
+    error(cause?.message || 'Não foi possível renomear o modelo.')
+  }
 }
 
 // ===== Item unit editing =====
@@ -872,7 +889,7 @@ async function saveAiCatalog() {
     subcategory: data.subcategory.trim() || null,
     name: data.name.trim(),
     unit: data.unit || 'UN',
-    minStock: 0,
+    minStock: null,
     attributes: [...data.attributes],
     location: ''
   })
@@ -1128,8 +1145,10 @@ async function organizeSubcategoriesAlphabetically() {
     editingUnitItemId,
     editUnitValue,
     editingItemModel,
+    editItemModelName,
     startEditItemModel,
     cancelEditItemModel,
+    saveItemModelName,
     startEditUnit,
     saveEditUnit,
     cancelEditUnit,

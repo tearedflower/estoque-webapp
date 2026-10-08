@@ -46,7 +46,7 @@ export function useEpis() {
     const cleanQuantity = Number(quantity)
     if (!cleanRole) return { ok: false, error: 'Cargo obrigatorio.' }
     if (!cleanTarget.targetType || !cleanTarget.targetKey) return { ok: false, error: 'EPI obrigatorio.' }
-    if (!Number.isInteger(cleanDays) || cleanDays <= 0) return { ok: false, error: 'Periodicidade invalida.' }
+    if (!Number.isInteger(cleanDays) || cleanDays < 0) return { ok: false, error: 'Periodicidade invalida.' }
     if (!Number.isInteger(cleanQuantity) || cleanQuantity <= 0) return { ok: false, error: 'Quantidade invalida.' }
     if (roleRules.value.some(r =>
       r.roleName.toLowerCase() === cleanRole.toLowerCase() &&

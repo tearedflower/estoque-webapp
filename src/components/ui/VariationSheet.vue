@@ -26,7 +26,13 @@ const props = defineProps({
 const emit = defineEmits(['close', 'quick-movement', 'adjust-stock', 'open-work-order'])
 const { user } = useAuth()
 const { getDestFullName } = useDestinations()
-const { editVariation } = useItems()
+const {
+  items,
+  variations,
+  editVariation,
+  getCategoriesForGroup,
+  getSubcategoriesForCategory,
+} = useItems()
 const { success, error } = useToast()
 
 const activeTab = ref(props.initialTab)
@@ -45,6 +51,10 @@ const photoUploading = ref(false)
 const photoRemoving = ref(false)
 const photoRemoveConfirm = ref(false)
 const photoRevision = ref(0)
+const targetGroup = ref('')
+const targetCategory = ref('')
+const targetSubcategory = ref('')
+const targetItemId = ref('')
 
 onMounted(async () => {
   await nextTick()
@@ -54,6 +64,44 @@ onUnmounted(() => dialogRef.value?.close())
 
 const status = computed(() => stockAlertStatus(props.variation, props.item))
 const canSetInitialStock = computed(() => props.canEditDetails && user.value?.id === 'user_admin')
+const targetGroups = computed(() =>
+  [...new Set(items.value.map(item => item.group))]
+    .sort((left, right) => left.localeCompare(right, 'pt-BR', { sensitivity: 'base' }))
+)
+const targetCategories = computed(() =>
+  targetGroup.value ? getCategoriesForGroup(targetGroup.value) : []
+)
+const targetSubcategories = computed(() =>
+  targetGroup.value && targetCategory.value
+    ? getSubcategoriesForCategory(targetGroup.value, targetCategory.value)
+    : []
+)
+const targetItems = computed(() => items.value
+  .filter(item => item.group === targetGroup.value)
+  .filter(item => targetCategory.value ? item.category === targetCategory.value : !item.category)
+  .filter(item => targetSubcategory.value ? item.subcategory === targetSubcategory.value : !item.subcategory)
+  .filter(item => item.unit === props.item.unit)
+  .filter(item => {
+    const hierarchyName = item.subcategory || item.category || item.group
+    return item.name !== hierarchyName || variations.value.some(variation => variation.itemId === item.id)
+  })
+  .sort((left, right) => left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base', numeric: true }))
+)
+const targetItem = computed(() =>
+  items.value.find(item => item.id === targetItemId.value) || null
+)
+const targetPath = computed(() =>
+  [targetItem.value?.group, targetItem.value?.category, targetItem.value?.subcategory, targetItem.value?.name]
+    .filter(Boolean)
+    .join(' › ')
+)
+const orphanValues = computed(() => {
+  if (!targetItem.value || targetItem.value.id === props.item.id) return []
+  const attributes = new Set(targetItem.value.attributes || [])
+  return Object.entries(props.variation.values || {}).filter(([key, value]) =>
+    !attributes.has(key) && String(value || '').trim()
+  )
+})
 
 const statusConfig = {
   zero: { label: 'Sem estoque', pillClass: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' },
@@ -120,8 +168,37 @@ const relatedOrders = computed(() => props.workOrders.filter(order =>
 
 function resetEditForm() {
   editForm.value = variationFormForEdit(props.item, props.variation)
+  targetGroup.value = props.item.group
+  targetCategory.value = props.item.category || ''
+  targetSubcategory.value = props.item.subcategory || ''
+  targetItemId.value = props.item.id
   initialStockOpen.value = false
   initialStockValue.value = Number(props.variation.initialStock ?? props.variation.stock ?? 0)
+}
+
+function changeTargetGroup() {
+  targetCategory.value = ''
+  targetSubcategory.value = ''
+  targetItemId.value = ''
+}
+
+function changeTargetCategory() {
+  targetSubcategory.value = ''
+  targetItemId.value = ''
+}
+
+function changeTargetSubcategory() {
+  targetItemId.value = ''
+}
+
+function changeTargetItem() {
+  if (!targetItem.value) return
+  editForm.value.values = Object.fromEntries(
+    (targetItem.value.attributes || []).map(attribute => [
+      attribute,
+      props.variation.values?.[attribute] || '',
+    ])
+  )
 }
 
 watch(() => props.variation.id, () => {
@@ -242,7 +319,8 @@ function startInitialStockEdit() {
 
 async function saveEdit() {
   if (editSaving.value) return
-  const validationError = validateVariationForm(props.item, editForm.value)
+  if (!targetItem.value) { error('Escolha o modelo de destino.'); return }
+  const validationError = validateVariationForm(targetItem.value, editForm.value)
   if (validationError) { error(validationError); return }
   const nextInitialStock = Number(initialStockValue.value)
   if (initialStockOpen.value && (!Number.isFinite(nextInitialStock) || nextInitialStock < 0)) {
@@ -253,10 +331,14 @@ async function saveEdit() {
   editSaving.value = true
   try {
     const changes = {
+      itemId: targetItem.value.id,
       values: { ...editForm.value.values },
       stock: props.variation.stock,
       minStock: editForm.value.minStock,
-      extras: extrasListToObject(editForm.value.extrasList),
+      extras: {
+        ...Object.fromEntries(orphanValues.value),
+        ...extrasListToObject(editForm.value.extrasList),
+      },
       location: editForm.value.locations[0] || '',
       locations: [...editForm.value.locations],
       destinations: [...editForm.value.destinations],
@@ -264,8 +346,13 @@ async function saveEdit() {
     if (initialStockOpen.value && canSetInitialStock.value) changes.initialStock = nextInitialStock
     const result = await editVariation(props.variation.id, changes)
     if (!result.ok) { error(result.error); return }
-    success('Variação atualizada.')
-    activeTab.value = 'data'
+    if (targetItem.value.id !== props.item.id) {
+      success(`Variação movida para "${targetItem.value.name}".`)
+      emit('close')
+    } else {
+      success('Variação atualizada.')
+      activeTab.value = 'data'
+    }
   } catch (e) {
     error(e.message)
   } finally {
@@ -356,7 +443,7 @@ async function saveEdit() {
           </div>
           <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50">
             <p class="text-xs text-gray-500 dark:text-gray-400">Mínimo</p>
-            <p class="mt-1 text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ variation.minStock ?? 0 }}</p>
+            <p class="mt-1 text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ variation.minStock ?? 'Não definido' }}</p>
           </div>
           <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50">
             <p class="text-xs text-gray-500 dark:text-gray-400">Status</p>
@@ -564,6 +651,72 @@ async function saveEdit() {
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">O saldo é alterado por Ajustar para manter o histórico de estoque.</p>
           </div>
 
+          <section class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Modelo do item</h4>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Mova a variação sem alterar saldo, foto ou histórico.</p>
+              </div>
+              <span class="ds-attribute-tag rounded border px-2 py-1 text-[11px] font-semibold">{{ item.unit }}</span>
+            </div>
+
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label class="block">
+                <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">Grupo</span>
+                <select
+                  v-model="targetGroup"
+                  class="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                  @change="changeTargetGroup"
+                >
+                  <option v-for="group in targetGroups" :key="group" :value="group">{{ group }}</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">Subgrupo</span>
+                <select
+                  v-model="targetCategory"
+                  class="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                  @change="changeTargetCategory"
+                >
+                  <option value="">Sem subgrupo</option>
+                  <option v-for="category in targetCategories" :key="category" :value="category">{{ category }}</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">Subnível opcional</span>
+                <select
+                  v-model="targetSubcategory"
+                  :disabled="!targetCategory"
+                  class="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                  @change="changeTargetSubcategory"
+                >
+                  <option value="">Sem subnível</option>
+                  <option v-for="subcategory in targetSubcategories" :key="subcategory" :value="subcategory">{{ subcategory }}</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">Modelo</span>
+                <select
+                  v-model="targetItemId"
+                  :disabled="!targetGroup"
+                  class="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                  @change="changeTargetItem"
+                >
+                  <option value="">Selecione o modelo</option>
+                  <option v-for="model in targetItems" :key="model.id" :value="model.id">{{ model.name }}</option>
+                </select>
+              </label>
+            </div>
+
+            <div v-if="targetItem" class="mt-3 rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
+              <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Destino</p>
+              <p class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{{ targetPath }}</p>
+            </div>
+            <p v-if="orphanValues.length" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+              {{ orphanValues.length }} atributo(s) sem correspondência serão preservados como campos extras.
+            </p>
+          </section>
+
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Destinos vinculados</h4>
@@ -585,10 +738,10 @@ async function saveEdit() {
             </div>
           </div>
 
-          <div v-if="item.attributes?.length">
+          <div v-if="targetItem?.attributes?.length">
             <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</h4>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label v-for="attribute in item.attributes" :key="attribute" class="block">
+              <label v-for="attribute in targetItem.attributes" :key="attribute" class="block">
                 <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">{{ attribute }}</span>
                 <input
                   v-model="editForm.values[attribute]"
@@ -608,6 +761,7 @@ async function saveEdit() {
                 type="number"
                 min="0"
                 step="1"
+                placeholder="Não definido"
                 class="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm tabular-nums text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               />
             </label>

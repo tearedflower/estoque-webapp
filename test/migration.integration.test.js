@@ -47,6 +47,20 @@ test('migração versionada cria backup antes de alterar um banco existente', { 
     );
     INSERT INTO epi_role_rules (id, role_name, target_type, target_key, target_label, days, active)
     VALUES ('legacy_rule', 'Operador', 'item', 'item_1', 'Mascara', 30, 1);
+    CREATE TABLE items (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL, category TEXT,
+      subcategory TEXT, unit TEXT NOT NULL DEFAULT 'UN', min_stock REAL NOT NULL DEFAULT 0,
+      attributes TEXT NOT NULL DEFAULT '[]', location TEXT DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE variations (
+      id TEXT PRIMARY KEY, item_id TEXT NOT NULL, vals TEXT NOT NULL DEFAULT '{}',
+      stock REAL NOT NULL DEFAULT 0, min_stock REAL NOT NULL DEFAULT 0,
+      initial_stock REAL NOT NULL DEFAULT 0, extras TEXT NOT NULL DEFAULT '{}',
+      location TEXT DEFAULT '', locations TEXT NOT NULL DEFAULT '[]',
+      destinations TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT INTO items (id, name, group_name, min_stock) VALUES ('legacy_item', 'Item legado', 'Teste', 4);
+    INSERT INTO variations (id, item_id, min_stock) VALUES ('legacy_variation', 'legacy_item', 0);
   `)
   legacyDb.pragma('user_version = 0')
   legacyDb.close()
@@ -88,10 +102,16 @@ test('migração versionada cria backup antes de alterar um banco existente', { 
   backupDb.close()
 
   const migratedDb = new Database(dbPath, { readonly: true })
-  assert.equal(migratedDb.pragma('user_version', { simple: true }), 5)
+  assert.equal(migratedDb.pragma('user_version', { simple: true }), 8)
   assert.ok(migratedDb.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'expires_at'))
   assert.ok(migratedDb.prepare('PRAGMA table_info(items)').all().some(column => column.name === 'active'))
+  assert.ok(migratedDb.prepare('PRAGMA table_info(items)').all().some(column => column.name === 'min_stock_defined'))
   assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'movement_batch_requests'").get())
+  assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'movement_import_mappings'").get())
+  assert.ok(migratedDb.prepare('PRAGMA table_info(movements)').all().some(column => column.name === 'affects_stock'))
+  assert.ok(migratedDb.prepare('PRAGMA table_info(variations)').all().some(column => column.name === 'min_stock_defined'))
+  assert.equal(migratedDb.prepare("SELECT min_stock_defined FROM items WHERE id = 'legacy_item'").pluck().get(), 1)
+  assert.equal(migratedDb.prepare("SELECT min_stock_defined FROM variations WHERE id = 'legacy_variation'").pluck().get(), 0)
   assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'photo_batches'").get())
   assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'photo_batch_photos'").get())
   assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'variation_photos'").get())

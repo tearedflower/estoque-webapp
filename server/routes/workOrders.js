@@ -5,6 +5,8 @@ import { requireAdmin, requireAuth, requireOperator } from '../middleware/auth.j
 import { getDestinationFullName } from '../utils/destinations.js'
 import { nextMotorMaintenanceStatus } from '../utils/motorStatus.js'
 import { workOrderCreationDateError } from '../../src/utils/workOrderForm.js'
+import { parsePositiveQty } from '../utils/stockMath.js'
+import { prepareStockConfirmations, applyStockConfirmations } from '../utils/stockConfirmation.js'
 
 const router = Router()
 const INTERNAL_MAINTENANCE_LOCATION = 'Oficina'
@@ -853,13 +855,13 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const tx = db.transaction(() => {
     for (const item of workOrderItems) {
       if (!item.movement_id) continue
-      const movement = db.prepare('SELECT doc_ref FROM movements WHERE id = ?').get(item.movement_id)
-      const isImplicit = movement?.doc_ref?.startsWith('OS #')
+      const movement = db.prepare('SELECT doc_ref, qty, type, affects_stock FROM movements WHERE id = ?').get(item.movement_id)
+      const isImplicit = movement?.type === 'saida' && movement.doc_ref === `OS #${o.number}`
       if (!isImplicit) continue
 
       const variation = db.prepare('SELECT stock FROM variations WHERE id = ?').get(item.variation_id)
-      if (variation) {
-        const newStock = variation.stock + item.qty
+      if (variation && movement.affects_stock !== 0) {
+        const newStock = variation.stock + movement.qty
         db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(newStock, item.variation_id)
         restoredStockByVariation.set(item.variation_id, newStock)
       }
@@ -886,8 +888,9 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
   const o = db.prepare('SELECT * FROM work_orders WHERE id = ?').get(req.params.id)
   if (!o) return res.status(404).json({ error: 'Ordem de serviço não encontrada' })
 
-  const { variationId, qty } = req.body
-  if (!variationId || !qty || qty <= 0) return res.status(400).json({ error: 'variationId e qty (>0) são obrigatórios' })
+  const { variationId } = req.body
+  const qty = parsePositiveQty(req.body.qty)
+  if (!variationId || !qty) return res.status(400).json({ error: 'variationId e qty (>0) são obrigatórios' })
 
   const variation = db.prepare('SELECT * FROM variations WHERE id = ? AND active = 1').get(variationId)
   if (!variation) return res.status(404).json({ error: 'Variação não encontrada' })
@@ -895,8 +898,9 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
   const item = db.prepare('SELECT * FROM items WHERE id = ? AND active = 1').get(variation.item_id)
   if (!item) return res.status(404).json({ error: 'Item não encontrado' })
 
-  // Check stock
-  if (variation.stock < qty) return res.status(400).json({ error: `Estoque insuficiente. Disponível: ${variation.stock}` })
+  const confirmations = prepareStockConfirmations(db, [{ variationId, qty, type: 'saida' }], req.body.stockCounts)
+  const stockBefore = confirmations.get(variationId)?.countedStock ?? variation.stock
+  if (stockBefore < qty) return res.status(400).json({ error: `Estoque insuficiente. Disponível: ${stockBefore}` })
 
   const operatorId = req.user?.id || ''
   const operatorName = req.user?.name || ''
@@ -904,7 +908,6 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
   const materialDestination = o.maintenance_destination_name || o.maintenance_external_location || o.destination_name || ''
 
   // Deduct stock + create implicit movement in a transaction
-  const stockBefore = variation.stock
   const stockAfter = stockBefore - qty
 
   const movId = genId('mov')
@@ -912,6 +915,7 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
   const now = new Date().toISOString()
 
   const tx = db.transaction(() => {
+    applyStockConfirmations(db, confirmations, req.user, now)
     // Update variation stock
     db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(stockAfter, variationId)
 
@@ -968,7 +972,8 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
       note: `Material adicionado via OS #${o.number}`,
       operatorId, operatorName
     },
-    newStock: stockAfter
+    newStock: stockAfter,
+    stockConfirmed: true
   })
 })
 
@@ -976,18 +981,19 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
 router.delete('/:id/items/:itemId', requireAuth, requireAdmin, (req, res) => {
   const woi = db.prepare('SELECT * FROM work_order_items WHERE id = ? AND work_order_id = ?').get(req.params.itemId, req.params.id)
   if (!woi) return res.status(404).json({ error: 'Item da OS não encontrado' })
+  const order = db.prepare('SELECT number FROM work_orders WHERE id = ?').get(req.params.id)
+  const movement = woi.movement_id ? db.prepare('SELECT doc_ref, qty, type, affects_stock FROM movements WHERE id = ?').get(woi.movement_id) : null
+  const isImplicit = movement?.type === 'saida' && movement.doc_ref === `OS #${order?.number}`
 
   const tx = db.transaction(() => {
     // Only revert stock and remove movement if it was an implicit movement (added directly via OS)
     // For linked movements (from saída flow), stock was already handled by the movement itself
-    const movement = woi.movement_id ? db.prepare('SELECT doc_ref FROM movements WHERE id = ?').get(woi.movement_id) : null
-    const isImplicit = movement?.doc_ref?.startsWith('OS #')
 
     if (isImplicit) {
       // Revert stock
       const variation = db.prepare('SELECT stock FROM variations WHERE id = ?').get(woi.variation_id)
-      if (variation) {
-        db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(variation.stock + woi.qty, woi.variation_id)
+      if (variation && movement.affects_stock !== 0) {
+        db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(variation.stock + movement.qty, woi.variation_id)
       }
       db.prepare('DELETE FROM movements WHERE id = ?').run(woi.movement_id)
     }
@@ -1008,10 +1014,10 @@ router.delete('/:id/items/:itemId', requireAuth, requireAdmin, (req, res) => {
   const newStock = db.prepare('SELECT stock FROM variations WHERE id = ?').get(woi.variation_id)
   res.json({
     ok: true,
-    removedMovementId: woi.movement_id || null,
+    removedMovementId: isImplicit ? woi.movement_id : null,
     variationId: woi.variation_id,
     newStock: newStock ? newStock.stock : null,
-    implicit: !!woi.movement_id
+    implicit: isImplicit
   })
 })
 
@@ -1025,6 +1031,10 @@ router.post('/:id/items/link', requireAuth, requireOperator, (req, res) => {
 
   const mov = db.prepare('SELECT * FROM movements WHERE id = ?').get(movementId)
   if (!mov) return res.status(404).json({ error: 'Movimentação não encontrada' })
+  if (mov.type !== 'saida') return res.status(400).json({ error: 'Somente saídas podem ser vinculadas a uma OS.' })
+  if (db.prepare('SELECT id FROM work_order_items WHERE movement_id = ?').get(movementId)) {
+    return res.status(409).json({ error: 'Esta movimentação já está vinculada a uma OS.' })
+  }
 
   const woiId = genId('osi')
   const now = new Date().toISOString()
