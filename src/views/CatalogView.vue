@@ -16,6 +16,7 @@ import {
 import VariationSheet from '../components/ui/VariationSheet.vue'
 import AppDialog from '../components/ui/AppDialog.vue'
 import AppButton from '../components/ui/AppButton.vue'
+import { sortedAttributeNames } from '../utils/attributes.js'
 import AppLink from '../components/ui/AppLink.vue'
 import AiCatalogDialog from '../components/catalog/AiCatalogDialog.vue'
 
@@ -26,8 +27,9 @@ const props = defineProps({
   search: { type: String, default: '' },
   initialItemId: { type: String, default: '' },
   initialVariationId: { type: String, default: '' },
+  filtersOpen: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:search', 'update:record', 'quick-movement', 'open-work-order'])
+const emit = defineEmits(['update:search', 'update:record', 'quick-movement', 'open-work-order', 'toggle-sidebar'])
 
 const {
   items, variations,
@@ -760,6 +762,20 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
 <template>
   <div class="relative">
     <div class="catalog-toolbar">
+    <AppButton
+      variant="secondary"
+      size="icon"
+      class="catalog-filter-toggle !h-10 !w-10 !min-w-10"
+      aria-controls="mobile-side-panel"
+      :aria-expanded="filtersOpen"
+      :aria-label="filtersOpen ? 'Fechar categorias e filtros' : 'Mostrar categorias e filtros'"
+      :title="filtersOpen ? 'Fechar categorias e filtros' : 'Mostrar categorias e filtros'"
+      @click="emit('toggle-sidebar')"
+    >
+      <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h16.5M6.75 12h10.5m-7.5 6.75h4.5" />
+      </svg>
+    </AppButton>
     <div class="ds-query-bar" role="search" aria-label="Busca de materiais">
       <input class="ds-query-input" type="search" aria-label="Buscar materiais" placeholder="Buscar material, medida, marca ou local…" :value="searchQuery" @input="searchCatalog($event.target.value)" />
       <AppButton v-if="searchQuery" variant="secondary" @click="searchCatalog('')">Limpar</AppButton>
@@ -934,7 +950,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
                 <td class="px-4 py-2.5">
                   <AppLink class="flex flex-wrap gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" :target="{ tab: 'catalogo', itemId: viewingItem.id, variationId: v.id }" @navigate="openVariationSheet(v)" @click.stop>
                     <span
-                      v-for="attr in viewingItem.attributes"
+                      v-for="attr in sortedAttributeNames(viewingItem.attributes)"
                       :key="attr"
                       class="ds-attribute-tag inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs"
                       :title="attr"
@@ -978,7 +994,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
                     <span class="text-amber-600 dark:text-amber-400">{{ Object.keys(v.extras).length }} {{ Object.keys(v.extras).length === 1 ? 'campo' : 'campos' }}</span>
                     <svg class="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 group-hover/obs:text-amber-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
                     <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/obs:block z-20 px-3 py-2 rounded-lg bg-gray-900 dark:bg-gray-700 text-white text-xs shadow-lg whitespace-nowrap">
-                      <span v-for="(val, key) in v.extras" :key="key" class="block"><span class="text-gray-400">{{ key }}:</span> {{ val }}</span>
+                      <span v-for="key in sortedAttributeNames(Object.keys(v.extras))" :key="key" class="block"><span class="text-gray-400">{{ key }}:</span> {{ v.extras[key] }}</span>
                     </span>
                   </span>
                   <span v-else class="text-gray-300 dark:text-gray-600">—</span>
@@ -1252,7 +1268,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
             </button>
             <div v-else class="flex items-center gap-2">
               <span class="text-xs text-red-600 dark:text-red-400">Apagar tudo?</span>
-              <button class="px-3 py-1.5 text-xs font-bold rounded bg-red-500 text-white hover:bg-red-600 transition-colors" @click="clearAllData">Sim</button>
+              <button class="px-3 py-1.5 text-xs font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)] transition-colors" @click="clearAllData">Sim</button>
               <button class="px-3 py-1.5 text-xs font-medium rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors" @click="showClearConfirm = false">Não</button>
             </div>
           </div>
@@ -1398,7 +1414,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
         <div v-if="variationFormItem?.attributes?.length" class="mb-4">
           <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Atributos</label>
           <div class="grid grid-cols-2 gap-3">
-            <div v-for="attr in variationFormItem.attributes" :key="attr">
+            <div v-for="attr in sortedAttributeNames(variationFormItem.attributes)" :key="attr">
               <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ attr }}</label>
               <input
                 v-model="varForm.values[attr]"

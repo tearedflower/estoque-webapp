@@ -2,6 +2,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import AppSidebar from './components/ui/AppSidebar.vue'
 import RailFooter from './components/ui/RailFooter.vue'
+import AppNavigation from './components/ui/AppNavigation.vue'
 import ToastContainer from './components/ui/ToastContainer.vue'
 import StockConfirmationDialog from './components/movements/StockConfirmationDialog.vue'
 import { stockConfirmationRevision } from './composables/useStockConfirmation.js'
@@ -31,6 +32,7 @@ import { buildGlobalSearchResults } from './utils/globalSearch.js'
 import { failedSourceNames } from './utils/sync.js'
 
 const CatalogView = defineAsyncComponent(() => import('./views/CatalogView.vue'))
+const ReportsView = defineAsyncComponent(() => import('./views/ReportsView.vue'))
 const CadastrosView = defineAsyncComponent(() => import('./views/CadastrosView.vue'))
 const InventarioView = defineAsyncComponent(() => import('./views/InventarioView.vue'))
 const MovimentacoesView = defineAsyncComponent(() => import('./views/MovimentacoesView.vue'))
@@ -93,18 +95,18 @@ function loadStoredList(key) {
 }
 
 const savedUiState = loadUiState()
-const savedActiveTab = ['dashboard', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin'].includes(savedUiState.activeTab)
+const savedActiveTab = ['dashboard', 'relatorios', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin'].includes(savedUiState.activeTab)
   ? savedUiState.activeTab
   : 'dashboard'
 const showLoginModal = ref(false)
 const mobileSidebarOpen = ref(false)
 const mobileSidebarTrigger = ref(null)
-const railOpen = ref(false)
 const catalogSidebarDismissed = ref(true)
 const catalogSearch = ref(savedUiState.catalogSearch || '')
 const catalogRef = ref(null)
 const activeTab = ref(savedActiveTab)
 const requestedInventorySection = ref(savedUiState.inventorySection || 'estoque')
+const requestedReportsTab = ref('movimentacoes')
 const requestedInventoryStatus = ref(savedUiState.inventoryStatus || 'all')
 const requestedInventorySearch = ref(savedUiState.inventorySearch || '')
 const requestedOrdersTab = ref(savedUiState.ordersTab || 'ordens')
@@ -129,7 +131,6 @@ const GLOBAL_SEARCH_RECENTS_KEY = 'estoque_global_search_recents_v1'
 const globalSearchRecentIds = ref(loadStoredList(GLOBAL_SEARCH_RECENTS_KEY))
 const syncFailures = ref([])
 const syncing = ref(false)
-const globalCreateRootRef = ref(null)
 const shortcutHelpOpen = ref(false)
 const shortcutPrefix = ref('')
 const passwordModalOpen = ref(false)
@@ -152,7 +153,7 @@ const catalogSidebarDocked = computed(() => showCatalogSidebar.value)
 const sidebarDocked = computed(() => catalogSidebarDocked.value)
 const sidebarOverlayOpen = computed(() => anySidebar.value && mobileSidebarOpen.value && !sidebarDocked.value)
 const navigationGroups = [
-  { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }] },
+  { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }, { id: 'relatorios', label: 'Relatórios' }] },
   {
     id: 'materiais',
     label: 'Materiais',
@@ -175,7 +176,15 @@ const navigationGroups = [
       { id: 'epis-admin', label: 'Editar EPIs', target: { tab: 'epis-admin', requiresAdmin: true }, requiresAdmin: true },
     ],
   },
-  { id: 'movimentacoes', label: 'Entradas e saídas', defaultTab: 'movimentacoes', icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5', tabs: [{ id: 'movimentacoes', label: 'Entradas e saídas' }] },
+  {
+    id: 'movimentacoes', label: 'Entradas e saídas', defaultTab: 'movimentacoes',
+    icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+    tabs: [
+      { id: 'movimentacoes', label: 'Registrar', target: { tab: 'movimentacoes', subTab: 'entrada', requiresOperator: true }, requiresOperator: true },
+      { id: 'mov-historico', label: 'Histórico', target: { tab: 'movimentacoes', subTab: 'historico' } },
+      { id: 'mov-relatorios', label: 'Relatórios', target: { tab: 'movimentacoes', subTab: 'resumo' } },
+    ],
+  },
   {
     id: 'manutencao',
     label: 'Manutenção',
@@ -191,14 +200,6 @@ const navigationGroups = [
 const activeNavigationGroup = computed(() => {
   if (activeTab.value === 'inventario' && requestedInventorySection.value === 'epis') return 'epis'
   return navigationGroups.find(group => group.tabs.some(tab => tab.id === activeTab.value))?.id || 'inicio'
-})
-const activeTabLabel = computed(() => {
-  if (activeNavigationGroup.value === 'epis') return activeTab.value === 'epis-admin' ? 'Editar EPIs' : 'Controle de EPIs'
-  for (const group of navigationGroups) {
-    const tab = group.tabs.find(t => t.id === activeTab.value)
-    if (tab) return group.tabs.length > 1 ? `${group.label} · ${tab.label}` : tab.label
-  }
-  return ''
 })
 
 const navigationShortcuts = [
@@ -227,7 +228,11 @@ function canAccessTarget(target = {}) {
 const visibleNavigationGroups = computed(() =>
   navigationGroups
     .filter(canAccessTarget)
-    .map(group => ({ ...group, tabs: group.tabs.filter(canAccessTarget) }))
+    .map(group => ({
+      ...group,
+      active: activeNavigationGroup.value === group.id,
+      tabs: group.tabs.filter(canAccessTarget).map(tab => ({ ...tab, active: isNavigationTabActive(group, tab) })),
+    }))
 )
 
 const visibleNavigationShortcuts = computed(() =>
@@ -339,14 +344,12 @@ onMounted(async () => {
   window.addEventListener('hashchange', applyLocationRoute)
   window.addEventListener('app:data-invalidated', loadAllData)
   window.addEventListener('keydown', handleGlobalShortcutKeydown)
-  window.addEventListener('mousedown', handleGlobalPointerDown, true)
 })
 
 onUnmounted(() => {
   if (healthTimer) window.clearInterval(healthTimer)
   window.removeEventListener('app:data-invalidated', loadAllData)
   window.removeEventListener('keydown', handleGlobalShortcutKeydown)
-  window.removeEventListener('mousedown', handleGlobalPointerDown, true)
   window.removeEventListener('hashchange', applyLocationRoute)
   clearShortcutPrefix()
 })
@@ -366,7 +369,6 @@ watch(activeTab, async value => {
 
 watch(activeTab, value => {
   loadAllData()
-  railOpen.value = false
   if (value === 'catalogo' || value === 'movimentacoes') catalogSidebarDismissed.value = true
   saveUiState({ activeTab: value })
 })
@@ -535,23 +537,11 @@ function closeTopPopup() {
     closeMobileSidebar()
     return true
   }
-  if (railOpen.value) {
-    railOpen.value = false
-    return true
-  }
   if (showLoginModal.value) {
     showLoginModal.value = false
     return true
   }
   return false
-}
-
-function handleGlobalPointerDown(event) {
-  const target = event.target
-  if (!(target instanceof Node)) return
-  if (globalCreateOpen.value && !globalCreateRootRef.value?.contains(target)) {
-    globalCreateOpen.value = false
-  }
 }
 
 function isEditableTarget(target) {
@@ -626,32 +616,15 @@ function handleMovementComplete(target) {
   navigateTab(target)
 }
 
-function selectMainTab(tabId) {
-  if (tabId === 'cadastros' && !isAdmin.value) {
-    if (!isLoggedIn.value) showLoginModal.value = true
-    else error('A administração é restrita a administradores.')
-    return
-  }
-  activeTab.value = tabId
-}
-
-function selectNavigationGroup(group) {
-  if (!canAccessTarget(group)) {
-    if (!isLoggedIn.value) showLoginModal.value = true
-    else error('A administração é restrita a administradores.')
-    return
-  }
-  if (group.target) {
-    navigateTab(group.target)
-    return
-  }
-  navigateTab(group.defaultTab)
-}
-
 function isNavigationTabActive(group, tab) {
   if (activeNavigationGroup.value !== group.id) return false
   const target = tab.target || { tab: tab.id }
   if (activeTab.value !== target.tab) return false
+  if (group.id === 'movimentacoes') {
+    return tab.id === 'movimentacoes'
+      ? !['historico', 'resumo'].includes(movSubTab.value)
+      : movSubTab.value === target.subTab
+  }
   if (target.section) return requestedInventorySection.value === target.section
   return true
 }
@@ -665,8 +638,14 @@ function navigateTab(target) {
     else error('Seu perfil não tem permissão para esta ação.')
     return
   }
+  if (tab === 'relatorios') {
+    requestedReportsTab.value = options.subTab || 'movimentacoes'
+    activeTab.value = tab
+    return
+  }
   requestedItemId.value = options.itemId || ''
   requestedVariationId.value = options.variationId || ''
+  if (tab === 'catalogo' && options.clearSearch) catalogSearch.value = ''
   if ((tab === 'fechamentos' || options.section === 'fechamentos') && !isLoggedIn.value) {
     showLoginModal.value = true
     return
@@ -749,6 +728,7 @@ function navigateTab(target) {
 
 const currentRoute = computed(() => {
   const route = { tab: activeTab.value }
+  if (route.tab === 'relatorios') route.subTab = requestedReportsTab.value
   if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value })
   if (route.tab === 'inventario') Object.assign(route, { section: requestedInventorySection.value, status: requestedInventoryStatus.value, search: requestedInventorySearch.value, variationId: requestedVariationId.value })
   if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '' })
@@ -861,167 +841,32 @@ function handleGlobalShortcutKeydown(event) {
       @click="closeMobileSidebar()"
     ></button>
 
-    <!-- Rail de navegação -->
-    <aside
-      class="ds-rail"
-      :class="{ 'rail-open': railOpen }"
-      :role="railOpen ? 'dialog' : undefined"
-      :aria-modal="railOpen ? 'true' : undefined"
-      aria-label="Navegação principal"
-    >
-      <button class="ds-rail-brand" type="button" title="Ir para o início" @click="selectMainTab('dashboard')">
-        <img
-          :src="localBrandFavicon"
-          :alt="localBrandName"
-          class="h-7 w-7 rounded-md object-contain"
-          @error="$event.currentTarget.style.display = 'none'"
-        />
-        <span class="ds-rail-brand-name text-sm truncate">{{ localBrandName }}</span>
-        <span
-          v-if="environmentBadge"
-          class="rounded px-1.5 py-0.5 text-[10px] font-bold leading-none"
-          :class="environmentBadge.env === 'PROD' ? 'bg-red-500/15 text-red-600 dark:text-red-400' : 'ds-environment-badge-dev'"
-        >
-          {{ environmentBadge.env }}
-        </span>
-      </button>
-
-      <nav class="ds-rail-nav ds-scrollbar">
-        <template v-for="group in visibleNavigationGroups" :key="group.id">
-          <AppLink
-            :target="group.target || group.defaultTab"
-            class="ds-rail-item"
-            :class="activeNavigationGroup === group.id ? 'ds-rail-item-active' : ''"
-            :title="group.requiresAdmin && !isAdmin ? 'Acesso restrito a administradores' : group.label"
-            @navigate="selectNavigationGroup(group)"
-          >
-            <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" :d="group.icon" />
-            </svg>
-            {{ group.label }}
-          </AppLink>
-          <div v-if="group.tabs.length > 1">
-            <div class="ds-rail-sub">
-              <AppLink
-                v-for="tab in group.tabs"
-                :key="tab.id"
-                :target="tab.target || tab.id"
-                class="ds-rail-item"
-                :class="isNavigationTabActive(group, tab) ? 'ds-rail-item-active' : ''"
-                @navigate="navigateTab"
-              >
-                {{ tab.label }}
-              </AppLink>
-            </div>
-          </div>
-        </template>
-      </nav>
-
-    </aside>
-
-    <RailFooter
-      class="ds-fixed-rail-footer"
-      :class="{
-        'sidebar-footer-open': railOpen || anySidebar,
-        'sidebar-filter-active': anySidebar,
-      }"
-      :is-logged-in="isLoggedIn"
-      :user-name="user?.name || ''"
-      :is-dark="isDark"
-      :can-change-visual-style="canChangeVisualStyle"
-      :visual-style-name="visualStyleName"
-      @login="showLoginModal = true"
-      @change-password="openPasswordModal"
-      @logout="logoutFromMenu"
-      @toggle-visual-style="cycleStyle"
-      @toggle-theme="toggleTheme"
-    />
-
-    <button
-      v-if="railOpen"
-      type="button"
-      class="rail-backdrop"
-      aria-label="Fechar navegação"
-      @click="railOpen = false"
-    ></button>
-
     <!-- Main content -->
-    <div
-      class="ds-app-main"
-      :inert="sidebarOverlayOpen ? '' : undefined"
-    >
-      <!-- Topbar -->
+    <div class="ds-app-main" :inert="sidebarOverlayOpen ? '' : undefined">
       <header class="ds-topbar">
-        <AppButton
-          variant="ghost"
-          size="icon"
-          class="!w-9 !min-w-9 !h-9 min-[840px]:!hidden"
-          aria-label="Abrir navegação"
-          :aria-expanded="railOpen"
-          @click="railOpen = true"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-          </svg>
-        </AppButton>
-        <AppButton
-          v-if="catalogSidebarAvailable"
-          ref="mobileSidebarTrigger"
-          class="!w-9 !min-w-9 !h-9"
-          variant="ghost"
-          size="icon"
-          aria-controls="mobile-side-panel"
-          :aria-expanded="sidebarDocked || mobileSidebarOpen"
-          :aria-label="sidebarDocked || mobileSidebarOpen ? 'Fechar filtros' : catalogSidebarAvailable ? 'Mostrar categorias e filtros' : 'Mostrar filtros'"
-          :title="sidebarDocked || mobileSidebarOpen ? 'Fechar filtros' : catalogSidebarAvailable ? 'Mostrar categorias e filtros' : 'Mostrar filtros'"
-          @click="toggleSidebar"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h16.5M6.75 12h10.5m-7.5 6.75h4.5" />
-          </svg>
-        </AppButton>
-        <span class="ds-topbar-title truncate">{{ activeTabLabel }}</span>
-        <div class="ml-auto flex items-center gap-1.5">
-          <AppButton
-            variant="secondary"
-            size="sm"
-            title="Busca global (Ctrl+K)"
-            @click="openGlobalSearch"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
-            </svg>
-            <span class="hidden sm:inline">Busca global</span>
-          </AppButton>
-          <div v-if="createActions.length" ref="globalCreateRootRef" class="relative">
-            <AppButton
-              variant="primary"
-              size="sm"
-              title="Registrar ou cadastrar (Ctrl+N)"
-              :aria-expanded="globalCreateOpen"
-              @click="openGlobalCreate"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              <span class="hidden sm:inline">Registrar</span>
-            </AppButton>
-            <div
-              v-if="globalCreateOpen"
-              class="ds-menu ds-pop absolute right-0 mt-2 w-72 p-2"
-            >
-              <button
-                v-for="action in createActions"
-                :key="action.id"
-                type="button"
-                class="ds-menu-item"
-                @click="runCreateAction(action)"
-              >
-                <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ action.label }}</span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">{{ action.hint }}</span>
-              </button>
-            </div>
-          </div>
+        <AppLink target="dashboard" class="ds-nav-brand" title="Ir para o início" @navigate="navigateTab">
+          <img :src="localBrandFavicon" :alt="localBrandName" class="h-7 w-7 rounded-md object-contain" @error="$event.currentTarget.style.display = 'none'" />
+          <span class="ds-nav-brand-name">{{ localBrandName }}</span>
+          <span
+            v-if="environmentBadge"
+            class="rounded px-1.5 py-0.5 text-[10px] font-bold leading-none"
+            :class="environmentBadge.env === 'PROD' ? 'bg-red-500/15 text-red-600 dark:text-red-400' : 'ds-environment-badge-dev'"
+          >{{ environmentBadge.env }}</span>
+        </AppLink>
+        <AppNavigation :groups="visibleNavigationGroups" @navigate="navigateTab" />
+        <div class="ds-topbar-tools">
+          <RailFooter
+            :is-logged-in="isLoggedIn"
+            :user-name="user?.username || user?.name || ''"
+            :is-dark="isDark"
+            :can-change-visual-style="canChangeVisualStyle"
+            :visual-style-name="visualStyleName"
+            @login="showLoginModal = true"
+            @change-password="openPasswordModal"
+            @logout="logoutFromMenu"
+            @toggle-visual-style="cycleStyle"
+            @toggle-theme="toggleTheme"
+          />
         </div>
       </header>
 
@@ -1058,6 +903,7 @@ function handleGlobalShortcutKeydown(event) {
         <div class="min-w-0">
         <KeepAlive>
           <DashboardView v-if="activeTab === 'dashboard'" @go="navigateTab" />
+          <ReportsView v-if="activeTab === 'relatorios'" :initial-sub-tab="requestedReportsTab" @update:sub-tab="requestedReportsTab = $event" @go="navigateTab" />
         </KeepAlive>
 
         <!-- Catálogo tab -->
@@ -1067,8 +913,10 @@ function handleGlobalShortcutKeydown(event) {
           :search="catalogSearch"
           :initial-item-id="requestedItemId"
           :initial-variation-id="requestedVariationId"
+          :filters-open="sidebarDocked || mobileSidebarOpen"
           @update:record="record => { requestedItemId = record.itemId || ''; requestedVariationId = record.variationId || '' }"
           @update:search="v => catalogSearch = v"
+          @toggle-sidebar="toggleSidebar"
           @quick-movement="openContextQuickMovement"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
         />
@@ -1097,6 +945,7 @@ function handleGlobalShortcutKeydown(event) {
           @update:status="v => requestedInventoryStatus = v"
           @update:search="v => requestedInventorySearch = v"
           @quick-movement="openContextQuickMovement"
+          @navigate="navigateTab"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
         />
 
@@ -1144,6 +993,16 @@ function handleGlobalShortcutKeydown(event) {
 
     <!-- Login modal -->
     <LoginModal :show="showLoginModal" @close="showLoginModal = false" />
+
+    <AppDialog :visible="globalCreateOpen" align="top" aria-label="Registrar ou cadastrar" @close="globalCreateOpen = false">
+      <div class="ds-menu w-full max-w-md rounded-xl p-3">
+        <h2 class="px-3 py-2 font-semibold">Registrar ou cadastrar</h2>
+        <button v-for="action in createActions" :key="action.id" type="button" class="ds-menu-item" @click="runCreateAction(action)">
+          <span class="block text-sm font-semibold">{{ action.label }}</span>
+          <span class="ds-muted block text-xs">{{ action.hint }}</span>
+        </button>
+      </div>
+    </AppDialog>
 
     <AppDialog
       :visible="globalSearchOpen"

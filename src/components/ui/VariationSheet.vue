@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { sortedAttributeNames, variationAttributeRows } from '../../utils/attributes.js'
 import { useAuth } from '../../composables/useAuth.js'
 import { stockAlertStatus, useItems } from '../../composables/useItems.js'
 import { useDestinations } from '../../composables/useDestinations.js'
@@ -20,10 +21,11 @@ const props = defineProps({
   canManage: { type: Boolean, default: false },
   canAdjust: { type: Boolean, default: false },
   canEditDetails: { type: Boolean, default: false },
+  showCatalogLink: { type: Boolean, default: false },
   initialTab: { type: String, default: 'data' },
 })
 
-const emit = defineEmits(['close', 'quick-movement', 'adjust-stock', 'open-work-order'])
+const emit = defineEmits(['close', 'quick-movement', 'adjust-stock', 'open-work-order', 'go-to-catalog'])
 const { user } = useAuth()
 const { getDestFullName } = useDestinations()
 const {
@@ -115,15 +117,7 @@ const hierarchy = computed(() =>
 )
 const variationPhotoSrc = computed(() => `/api/photo-batches/variation/${encodeURIComponent(props.variation.id)}/image?v=${photoRevision.value}`)
 
-const variationTags = computed(() => {
-  const attrs = (props.item.attributes || [])
-    .map(key => ({ key, value: props.variation.values?.[key] || '' }))
-    .filter(tag => tag.value)
-  const extras = Object.entries(props.variation.extras || {})
-    .map(([key, value]) => ({ key, value }))
-    .filter(tag => tag.value)
-  return [...attrs, ...extras]
-})
+const variationTags = computed(() => variationAttributeRows(props.item, props.variation))
 
 const sortedMovements = computed(() =>
   props.movements
@@ -364,7 +358,7 @@ async function saveEdit() {
 <template>
   <dialog
     ref="dialogRef"
-    class="fixed inset-0 z-50 m-0 h-screen w-screen max-w-none bg-transparent p-0 backdrop:bg-black/50"
+    class="fixed inset-0 z-50 m-0 h-screen w-screen max-w-none bg-transparent p-0 backdrop:bg-[var(--ds-overlay)]"
     aria-modal="true"
     aria-label="Ficha operacional da variação"
     @cancel.prevent="emit('close')"
@@ -409,7 +403,21 @@ async function saveEdit() {
           <div class="min-w-0">
             <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Ficha da variação</p>
             <h2 class="mt-1 truncate text-xl font-semibold text-gray-900 dark:text-gray-100">{{ item.name }}</h2>
-            <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ hierarchy }}</p>
+            <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+              <p class="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">{{ hierarchy }}</p>
+              <button
+                v-if="showCatalogLink"
+                type="button"
+                class="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+                title="Abrir esta variação no catálogo"
+                @click="emit('go-to-catalog')"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h4.086c.597 0 1.17.237 1.591.659l1.164 1.182a2.25 2.25 0 0 0 1.606.659H18A2.25 2.25 0 0 1 20.25 9.25v8A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25v-10.5Z" />
+                </svg>
+                Ver no catálogo
+              </button>
+            </div>
             <div class="mt-3 flex flex-wrap gap-1.5">
               <span
                 v-for="tag in variationTags"
@@ -466,14 +474,14 @@ async function saveEdit() {
         <section v-if="canManage" class="flex flex-wrap items-center gap-2 border-b border-gray-200 p-4 dark:border-gray-700">
           <button
             type="button"
-            class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-700"
+            class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[var(--ds-success-solid)] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--ds-success-hover)]"
             @click="emit('quick-movement', 'entrada')"
           >
             Entrada
           </button>
           <button
             type="button"
-            class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+            class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[var(--ds-danger-solid)] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--ds-danger-hover)]"
             @click="emit('quick-movement', 'saida')"
           >
             Saída
@@ -501,7 +509,7 @@ async function saveEdit() {
                 @keydown.enter.prevent="submitAdjust"
                 @keydown.escape.prevent="adjustOpen = false"
               />
-              <button type="button" class="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700" @click="submitAdjust">Salvar</button>
+              <button type="button" class="rounded-lg bg-[var(--ds-success-solid)] px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--ds-success-hover)]" @click="submitAdjust">Salvar</button>
               <button type="button" class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700" @click="adjustOpen = false">Cancelar</button>
             </div>
           </div>
@@ -741,7 +749,7 @@ async function saveEdit() {
           <div v-if="targetItem?.attributes?.length">
             <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</h4>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label v-for="attribute in targetItem.attributes" :key="attribute" class="block">
+              <label v-for="attribute in sortedAttributeNames(targetItem.attributes)" :key="attribute" class="block">
                 <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">{{ attribute }}</span>
                 <input
                   v-model="editForm.values[attribute]"

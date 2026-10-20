@@ -1779,7 +1779,7 @@ function workOrderEndLabel(order) {
             class="grid grid-cols-[12px_minmax(0,1fr)] gap-3"
           >
             <div class="flex flex-col items-center">
-              <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" :class="!entry.endDate ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
+              <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" :class="!entry.endDate ? 'bg-[var(--ds-success-solid)]' : 'bg-gray-400 dark:bg-gray-600'"></span>
               <span v-if="index < selectedMotorLocationTrail.length - 1" class="my-1 w-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
             </div>
             <div class="min-w-0 pb-5">

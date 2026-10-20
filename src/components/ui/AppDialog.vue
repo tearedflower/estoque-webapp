@@ -30,7 +30,7 @@ onUnmounted(() => dialogRef.value?.close())
   <Teleport to="body">
     <dialog
       ref="dialogRef"
-      class="fixed inset-0 z-50 m-0 h-[100dvh] w-screen max-w-none bg-transparent p-0 backdrop:bg-black/55"
+      class="fixed inset-0 z-50 m-0 h-[100dvh] w-screen max-w-none bg-transparent p-0 backdrop:bg-[var(--ds-overlay)]"
       aria-modal="true"
       :aria-label="ariaLabel"
       @cancel.prevent="requestClose"

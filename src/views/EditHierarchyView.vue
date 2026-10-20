@@ -240,7 +240,7 @@ const {
 
           <template v-else-if="isDeleting('group', group)">
             <span class="flex-1 min-w-0 text-xs font-medium truncate">Excluir?</span>
-            <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-500 text-white hover:bg-red-600 flex-shrink-0" @click.stop="confirmDelete">Sim</button>
+            <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)] flex-shrink-0" @click.stop="confirmDelete">Sim</button>
             <button class="px-1.5 py-0.5 text-[10px] rounded bg-white/20 hover:bg-white/30 flex-shrink-0" @click.stop="cancelDelete">Não</button>
           </template>
 
@@ -367,7 +367,7 @@ const {
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex items-center gap-1">
                   <span class="text-xs font-medium text-red-500">Excluir?</span>
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex items-center gap-1">
@@ -466,7 +466,7 @@ const {
                 <div class="absolute inset-0 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 flex flex-col items-center justify-center gap-2 p-3">
                   <p class="text-xs font-medium text-red-600 dark:text-red-400 text-center">Excluir {{ countItemsInCategory(selectedGroup, cat) }} modelo(s)?</p>
                   <div class="flex gap-2">
-                    <button class="px-3 py-1 text-xs font-bold rounded bg-red-500 text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                    <button class="px-3 py-1 text-xs font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                     <button class="px-3 py-1 text-xs rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300" @click.stop="cancelDelete">Não</button>
                   </div>
                 </div>
@@ -571,7 +571,7 @@ const {
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex items-center gap-1">
                   <span class="text-xs font-medium text-red-500">Excluir?</span>
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex items-center gap-1">
@@ -684,7 +684,7 @@ const {
                     <template v-if="isDeleting('subcategory', selectedGroup, selectedCategory, sub)">
                       <div class="flex items-center gap-1">
                         <span class="text-[11px] text-red-500 font-medium whitespace-nowrap">Excluir?</span>
-                        <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-500 text-white hover:bg-red-600" @click="confirmDelete">Sim</button>
+                        <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)]" @click="confirmDelete">Sim</button>
                         <button class="px-1.5 py-0.5 text-[10px] rounded bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300" @click="cancelDelete">Não</button>
                       </div>
                     </template>
@@ -904,7 +904,7 @@ const {
                   </template>
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex shrink-0 items-center gap-1">
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex shrink-0 items-center gap-1 opacity-0 transition group-hover/card:opacity-100">
@@ -1228,7 +1228,7 @@ const {
       </div>
       <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-gray-800">
         <button type="button" class="rounded-lg bg-gray-100 px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700" @click="cancelRemoveAttr">Cancelar</button>
-        <button type="button" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700" @click="confirmRemoveAttr">Excluir atributo</button>
+        <button type="button" class="rounded-lg bg-[var(--ds-danger-solid)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--ds-danger-hover)]" @click="confirmRemoveAttr">Excluir atributo</button>
       </div>
     </section>
   </AppDialog>

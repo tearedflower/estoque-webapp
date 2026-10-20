@@ -1,4 +1,4 @@
-export const routeTabs = ['dashboard', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin']
+export const routeTabs = ['dashboard', 'relatorios', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin']
 const routeKeys = ['section', 'subTab', 'search', 'status', 'itemId', 'variationId', 'orderId', 'group', 'category', 'subcategory']
 
 export function routeHref(target) {

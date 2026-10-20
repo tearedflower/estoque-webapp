@@ -23,7 +23,7 @@
     border-color: var(--ds-control-border);
     background: var(--ds-panel);
     color: var(--ds-text);
-    box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04);
+    box-shadow: var(--ds-shadow-control);
   }
 
   .ds-button-secondary:hover {
@@ -58,13 +58,11 @@
     background: color-mix(in srgb, currentColor 22%, var(--ds-panel));
   }
 
-  .ds-rail .ds-button-ghost,
   .ds-filter-rail .ds-button-ghost,
   .ds-topbar .ds-button-ghost {
     color: var(--ds-nav-text-muted);
   }
 
-  .ds-rail .ds-button-ghost:hover,
   .ds-filter-rail .ds-button-ghost:hover,
   .ds-topbar .ds-button-ghost:hover {
     background: var(--ds-nav-surface);
@@ -84,11 +82,11 @@
   }
 
   .ds-button-danger-solid {
-    background: var(--ds-danger);
-    color: #ffffff;
+    background: var(--ds-danger-solid);
+    color: var(--ds-on-danger);
   }
 
-  .ds-button-danger-solid:hover { filter: brightness(1.08); }
+  .ds-button-danger-solid:hover { background: var(--ds-danger-hover); }
 
   .ds-button-xs,
   .ds-button-sm {
@@ -157,7 +155,7 @@
     background: var(--ds-panel);
     color: var(--ds-text);
     font-weight: 600;
-    box-shadow: 0 0 0 1px var(--ds-border-subtle), 0 1px 2px rgba(24, 24, 27, 0.06);
+    box-shadow: var(--ds-shadow-control), 0 0 0 1px var(--ds-border-subtle);
   }
 
   /* ----- Tabelas ----- */
@@ -228,6 +226,7 @@
   /* ----- Checkbox de tabela ----- */
 
   .ds-table-checkbox {
+    position: relative;
     appearance: none;
     width: 0.875rem;
     height: 0.875rem;
@@ -247,14 +246,18 @@
   .ds-table-checkbox:checked {
     border-color: var(--ds-brand);
     background-color: var(--ds-brand);
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3.5 8.25 6.5 11 12.5 5' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: 0.75rem 0.75rem;
   }
 
-  :root.dark .ds-table-checkbox:checked {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3.5 8.25 6.5 11 12.5 5' stroke='%231e1b4b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  .ds-table-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 7px;
+    border-right: 2px solid var(--ds-primary-text);
+    border-bottom: 2px solid var(--ds-primary-text);
+    transform: rotate(45deg);
   }
 
   .ds-table-checkbox:focus-visible {

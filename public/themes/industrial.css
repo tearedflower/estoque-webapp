@@ -12,60 +12,74 @@
   --color-primary-200: #fde68a;
   --color-primary-300: #fcd34d;
   --color-primary-400: #fbbf24;
-  --color-primary-500: #f59e0b;
-  --color-primary-600: #d97706;
-  --color-primary-700: #b45309;
-  --color-primary-800: #92400e;
+  --color-primary-500: #b45309;
+  --color-primary-600: #9a4a0a;
+  --color-primary-700: #854007;
+  --color-primary-800: #713007;
   --color-primary-900: #78350f;
   --color-primary-950: #451a03;
 
-  /* Superfícies — zinc operacional, com camadas visíveis no modo claro. */
-  --ds-bg: #e7e8ea;
-  --ds-bg-wash: #f0f1f2;
-  --ds-panel: #f8f8f7;
-  --ds-panel-tint: #eceeef;
-  --ds-surface: #edeef0;
-  --ds-surface-strong: #d9dbde;
-  --ds-surface-hover: #e1e3e5;
-  --ds-side-bg: #eceeef;
+  /* Superfícies — neutros frios, com painéis claros e campos discretos. */
+  --ds-bg: #f3f5f8;
+  --ds-bg-wash: #f8fafc;
+  --ds-panel: #ffffff;
+  --ds-panel-tint: #f4f6f9;
+  --ds-surface: #f0f3f7;
+  --ds-surface-strong: #e4e9f0;
+  --ds-surface-hover: #e8edf4;
+  --ds-side-bg: #f4f6f9;
 
   /* Chrome escuro: rail e topbar enquadram a área de trabalho. */
-  --ds-nav-bg: #101013;
+  --ds-nav-bg: #18202b;
   --ds-nav-border: rgba(255, 255, 255, 0.08);
-  --ds-nav-text: #fafafa;
-  --ds-nav-text-muted: #a1a1aa;
-  --ds-nav-text-subtle: #71717a;
-  --ds-nav-info: #0084d1;
+  --ds-nav-text: #f1f5f9;
+  --ds-nav-text-muted: #c2cbd7;
+  --ds-nav-text-subtle: #9aa8ba;
+  --ds-nav-info: #93c5fd;
   --ds-nav-surface: rgba(255, 255, 255, 0.07);
-  --ds-nav-active-bg: #b45309;
+  --ds-nav-active-bg: #8a410b;
   --ds-nav-active-text: #ffffff;
   --ds-header-bg: transparent;
-  --ds-table-head: #eceeef;
+  --ds-table-head: #f0f3f7;
 
   /* Texto — quatro níveis. */
-  --ds-text: #18181b;
-  --ds-text-soft: #3f3f46;
-  --ds-text-muted: #606069;
-  --ds-text-subtle: #85858e;
+  --ds-text: #182230;
+  --ds-text-soft: #344054;
+  --ds-text-muted: #526175;
+  --ds-text-subtle: #667085;
 
   /* Bordas. */
-  --ds-border-subtle: rgba(24, 24, 27, 0.1);
-  --ds-border: #d1d2d5;
+  --ds-border-subtle: #e3e8ef;
+  --ds-border: #cdd5df;
 
   /* Controles. */
-  --ds-control-bg: #ffffff;
-  --ds-control-border: #c5c6ca;
+  --ds-control-bg: #f8fafc;
+  --ds-control-border: #b8c3d1;
 
   /* Ação e significado. */
   --ds-brand: #b45309;
   --ds-brand-hover: #92400e;
   --ds-primary-text: #ffffff;
-  --ds-active-bg: #d9dbde;
-  --ds-active-text: #18181b;
-  --ds-info: #2563eb;
-  --ds-danger: #b91c2b;
-  --ds-warning: #d97706;
-  --ds-success: #147a3d;
+  --ds-active-bg: #fff0db;
+  --ds-active-text: #854007;
+  --ds-info: #1d4ed8;
+  --ds-danger: #b42336;
+  --ds-warning: #8a4b08;
+  --ds-success: #146c43;
+
+  /* Cores de controles e camadas compartilhadas. */
+  --ds-danger-solid: #b42336;
+  --ds-danger-hover: #8f1d29;
+  --ds-success-solid: #146c43;
+  --ds-success-hover: #105735;
+  --ds-info-solid: #1d4ed8;
+  --ds-warning-solid: #c2410c;
+  --ds-on-danger: #ffffff;
+  --ds-overlay: rgba(15, 23, 42, 0.42);
+  --ds-tag-bg: #eaf0f6;
+  --ds-tag-border: #cdd7e3;
+  --ds-tag-text: #344054;
+  --ds-shadow-control: 0 1px 2px rgba(24, 34, 48, 0.06);
 
   /* Forma e profundidade. */
   --ds-radius-control: 6px;
@@ -73,54 +87,54 @@
   --ds-radius-modal: 12px;
   --ds-shadow-panel: 0 1px 2px rgba(24, 24, 27, 0.05);
   --ds-shadow-pop: 0 0 0 1px rgba(24, 24, 27, 0.05), 0 4px 12px rgba(24, 24, 27, 0.08), 0 12px 32px rgba(24, 24, 27, 0.1);
-  --ds-focus-ring: 0 0 0 2px var(--ds-panel), 0 0 0 4px color-mix(in srgb, var(--ds-brand) 45%, transparent);
+  --ds-focus-ring: 0 0 0 2px var(--ds-panel), 0 0 0 4px var(--ds-active-text);
 
-  /* Escala de cinzas = zinc; remapeia as utilitárias gray-* das views. */
-  --color-gray-50: #fafafa;
-  --color-gray-100: #f4f4f5;
-  --color-gray-200: #e4e4e7;
-  --color-gray-300: #d4d4d8;
-  --color-gray-400: #a1a1aa;
-  --color-gray-500: #71717a;
-  --color-gray-600: #52525b;
-  --color-gray-700: #3f3f46;
-  --color-gray-800: #27272a;
-  --color-gray-900: #18181b;
-  --color-gray-950: #09090b;
+  /* Compatibilidade com as utilitárias gray-* existentes. */
+  --color-gray-50: #f8fafc;
+  --color-gray-100: #f0f3f7;
+  --color-gray-200: #e3e8ef;
+  --color-gray-300: #cdd5df;
+  --color-gray-400: #667085;
+  --color-gray-500: #526175;
+  --color-gray-600: #414e61;
+  --color-gray-700: #344054;
+  --color-gray-800: #253244;
+  --color-gray-900: #182230;
+  --color-gray-950: #111820;
 }
 
 :root:not(.dark) {
-  /* Tailwind legado: tira branco puro e reforça estados semânticos. */
-  --color-white: #fafaf9;
+  /* Tailwind legado: mantém as cores antigas ligadas à paleta central. */
+  --color-white: #ffffff;
 
-  /* Fundos de seleção neutros; o laranja fica reservado para ações. */
-  --color-primary-50: #eceeef;
-  --color-primary-100: #d9dbde;
-  --color-primary-200: #c5c6ca;
+  /* Seleção em âmbar suave; ações usam o tom sólido. */
+  --color-primary-50: #fff5e6;
+  --color-primary-100: #ffebcc;
+  --color-primary-200: #f4d19d;
 
-  --color-amber-50: #f1dfd0;
-  --color-amber-100: #e3bea0;
-  --color-amber-200: #d09669;
-  --color-amber-300: #c4773b;
-  --color-amber-400: #b85d16;
-  --color-amber-500: #b45309;
-  --color-amber-600: #92400e;
-  --color-amber-700: #78350f;
-  --color-amber-800: #5f2a0b;
-  --color-amber-900: #451a03;
-  --color-amber-950: #2b1002;
+  --color-amber-50: #fff8ed;
+  --color-amber-100: #ffedcf;
+  --color-amber-200: #fbd7a4;
+  --color-amber-300: #f0b66b;
+  --color-amber-400: #cf862f;
+  --color-amber-500: #a86616;
+  --color-amber-600: #8a4b08;
+  --color-amber-700: #723a08;
+  --color-amber-800: #5e300b;
+  --color-amber-900: #4c280c;
+  --color-amber-950: #321705;
 
-  --color-yellow-50: #f1dfd0;
-  --color-yellow-100: #e3bea0;
-  --color-yellow-200: #d09669;
-  --color-yellow-300: #c4773b;
-  --color-yellow-400: #b85d16;
-  --color-yellow-500: #b45309;
-  --color-yellow-600: #92400e;
-  --color-yellow-700: #78350f;
-  --color-yellow-800: #5f2a0b;
-  --color-yellow-900: #451a03;
-  --color-yellow-950: #2b1002;
+  --color-yellow-50: #fff8ed;
+  --color-yellow-100: #ffedcf;
+  --color-yellow-200: #fbd7a4;
+  --color-yellow-300: #f0b66b;
+  --color-yellow-400: #cf862f;
+  --color-yellow-500: #a86616;
+  --color-yellow-600: #8a4b08;
+  --color-yellow-700: #723a08;
+  --color-yellow-800: #5e300b;
+  --color-yellow-900: #4c280c;
+  --color-yellow-950: #321705;
 
   --color-green-50: #e2f4e8;
   --color-green-100: #c6e9d1;
@@ -149,53 +163,67 @@
 
 :root.dark {
   color-scheme: dark;
+  --color-red-500: #ff9ca5;
+  --color-red-600: #ff9ca5;
+  --color-red-700: #8f1d29;
+  --color-green-600: #80d4a6;
+  --color-green-700: #105735;
+  --color-emerald-600: #80d4a6;
 
-  /* Superfícies — zinc escuro, um degrau por camada. */
-  --ds-bg: #09090b;
-  --ds-bg-wash: #101013;
-  --ds-panel: #141417;
-  --ds-panel-tint: #1a1a1e;
-  --ds-surface: #1d1d21;
-  --ds-surface-strong: #27272a;
-  --ds-surface-hover: #2e2e33;
-  --ds-side-bg: #101013;
+  /* Superfícies — grafite azulado, sem preto puro e com texto legível. */
+  --ds-bg: #11151b;
+  --ds-bg-wash: #151a22;
+  --ds-panel: #1a2029;
+  --ds-panel-tint: #202733;
+  --ds-surface: #232b36;
+  --ds-surface-strong: #303a48;
+  --ds-surface-hover: #2c3644;
+  --ds-side-bg: #151a22;
 
-  --ds-table-head: #1a1a1e;
+  --ds-table-head: #232b36;
 
-  --ds-text: #fafafa;
-  --ds-text-soft: #d4d4d8;
-  --ds-text-muted: #a1a1aa;
-  --ds-text-subtle: #71717a;
+  --ds-text: #edf2f7;
+  --ds-text-soft: #cbd5e1;
+  --ds-text-muted: #aab7c7;
+  --ds-text-subtle: #94a3b8;
 
-  --ds-border-subtle: rgba(255, 255, 255, 0.06);
-  --ds-border: rgba(255, 255, 255, 0.1);
+  --ds-border-subtle: #303b4a;
+  --ds-border: #414e60;
 
-  --ds-control-bg: #1d1d21;
-  --ds-control-border: rgba(255, 255, 255, 0.16);
+  --ds-control-bg: #151b24;
+  --ds-control-border: #526175;
 
   --ds-brand: #b45309;
   --ds-brand-hover: #92400e;
   --ds-primary-text: #ffffff;
-  --ds-active-bg: #b45309;
-  --ds-active-text: #ffffff;
-  --ds-info: #60a5fa;
-  --ds-danger: #f87171;
-  --ds-warning: #fbbf24;
-  --ds-success: #4ade80;
+  --ds-active-bg: #3b2c1c;
+  --ds-active-text: #ffd7a3;
+  --ds-info: #98bfff;
+  --ds-danger: #ff9ca5;
+  --ds-warning: #f7c66a;
+  --ds-success: #80d4a6;
+
+  --ds-danger-solid: #b42336;
+  --ds-on-danger: #ffffff;
+  --ds-overlay: rgba(4, 8, 14, 0.7);
+  --ds-tag-bg: #303c4c;
+  --ds-tag-border: #4d5d73;
+  --ds-tag-text: #e2eaf4;
+  --ds-shadow-control: 0 0 0 0 transparent;
 
   --ds-shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.04);
   --ds-shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.5);
-  --ds-focus-ring: 0 0 0 2px var(--ds-panel), 0 0 0 4px color-mix(in srgb, var(--ds-brand) 50%, transparent);
+  --ds-focus-ring: 0 0 0 2px var(--ds-panel), 0 0 0 4px var(--ds-active-text);
 
-  --color-gray-50: #fafafa;
-  --color-gray-100: #f4f4f5;
-  --color-gray-200: #e4e4e7;
-  --color-gray-300: #d4d4d8;
-  --color-gray-400: #a1a1aa;
-  --color-gray-500: #71717a;
-  --color-gray-600: #52525b;
-  --color-gray-700: #3f3f46;
-  --color-gray-800: #27272a;
-  --color-gray-900: #18181b;
-  --color-gray-950: #09090b;
+  --color-gray-50: #f8fafc;
+  --color-gray-100: #edf2f7;
+  --color-gray-200: #dce4ee;
+  --color-gray-300: #cbd5e1;
+  --color-gray-400: #aab7c7;
+  --color-gray-500: #94a3b8;
+  --color-gray-600: #526175;
+  --color-gray-700: #414e60;
+  --color-gray-800: #232b36;
+  --color-gray-900: #1a2029;
+  --color-gray-950: #11151b;
 }

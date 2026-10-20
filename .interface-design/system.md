@@ -29,8 +29,13 @@ Assinatura do produto: ficha de circulacao que conecta material, saldo, local ou
 - Nunca combinar `bg-primary-*` com `text-white` assumindo que a escala primaria e escura.
 - Usar `--ds-primary-text` sobre fundos primarios; nunca presumir texto branco.
 - Estados ativos usam `--ds-active-bg` com `--ds-active-text`.
-- Tags de atributos usam `.ds-attribute-tag`: `--ds-surface`, `--ds-border` e `--ds-text-soft`.
-- No Industrial escuro: grafite no canvas, superficies proximas, bordas discretas e texto claro sem branco puro.
+- Tags de atributos usam `.ds-attribute-tag`: `--ds-tag-bg`, `--ds-tag-border` e `--ds-tag-text`, iguais em todas as telas.
+- No Industrial claro: canvas cinza frio, paineis brancos, campos discretos e texto secundario com contraste legivel.
+- No Industrial escuro: grafite azulado sem preto puro, superficies proximas, bordas discretas e texto claro sem branco puro.
+- Selecao usa ambar suave com texto contrastante; preenchimento solido fica reservado a acoes.
+- Cores de aviso em texto usam `--ds-danger`/`--ds-success`; botoes solidos usam `--ds-danger-solid`/`--ds-success-solid` e suas variantes `-hover`.
+- Sombras e sobreposicoes usam `--ds-shadow-panel`, `--ds-shadow-control`, `--ds-shadow-pop` e `--ds-overlay`.
+- Cores literais ficam na paleta do tema; o preto e branco da ficha de EPI para impressao e uma excecao intencional.
 - Texto normal deve atingir contraste WCAG AA; estados interativos nao podem depender apenas da borda.
 
 ## Padroes reutilizaveis

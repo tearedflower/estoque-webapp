@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { isPlainLinkClick, parseRoute, routeHref, routeIdentity } from '../src/utils/navigation.js'
 
 test('navigation routes round-trip encoded filters and record ids', () => {
+  assert.deepEqual(parseRoute(routeHref({ tab: 'relatorios' })), { tab: 'relatorios' })
+  assert.deepEqual(parseRoute(routeHref({ tab: 'relatorios', subTab: 'estoque' })), { tab: 'relatorios', subTab: 'estoque' })
   const route = { tab: 'catalogo', group: 'Botas de Segurança', search: 'Composite/42', itemId: 'item 1', variationId: 'var&2' }
   assert.deepEqual(parseRoute(routeHref(route)), route)
   assert.equal(routeIdentity({ ...route, search: 'other', status: 'critical' }), routeIdentity(route))

@@ -2969,7 +2969,7 @@ function matBackToStep2() {
               <span class="text-xs text-red-600 dark:text-red-400">Confirmar?</span>
               <button
                 type="button"
-                class="min-h-10 px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded"
+                class="min-h-10 px-3 py-1 text-xs font-medium text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] rounded"
                 @click.stop="handleDeleteOS(order.id)"
               >
                 Sim
@@ -3372,7 +3372,7 @@ function matBackToStep2() {
                 </button>
                 <template v-else-if="isAdmin">
                   <span class="text-xs text-red-600 dark:text-red-400">Confirmar exclusão?</span>
-                  <button class="px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded" @click="handleDeleteOS(order.id)">Sim</button>
+                  <button class="px-2 py-1 text-xs font-medium text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] rounded" @click="handleDeleteOS(order.id)">Sim</button>
                   <button class="px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" @click="confirmDeleteId = null">Não</button>
                 </template>
               </div>
@@ -3491,7 +3491,7 @@ function matBackToStep2() {
                     </div>
                     <button
                       :disabled="!matParsedQty || matExceedsStock"
-                      class="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                      class="px-4 py-2 text-sm font-medium text-white bg-[var(--ds-success-solid)] hover:bg-[var(--ds-success-hover)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
                       @click="handleAddMaterial"
                     >Adicionar</button>
                   </div>
@@ -3526,7 +3526,7 @@ function matBackToStep2() {
                             @click="confirmRemoveItemId = mat.id"
                           >Remover</button>
                           <span v-else class="inline-flex items-center gap-1">
-                            <button class="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded" @click="handleRemoveMaterial(order.id, mat.id)">Sim</button>
+                            <button class="text-xs text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] px-2 py-0.5 rounded" @click="handleRemoveMaterial(order.id, mat.id)">Sim</button>
                             <button class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-0.5" @click="confirmRemoveItemId = null">Não</button>
                           </span>
                         </td>
@@ -4052,7 +4052,7 @@ function matBackToStep2() {
                 <button class="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800" @click="matBackToStep2">Cancelar</button>
                 <button
                   :disabled="!matParsedQty || matExceedsStock"
-                  class="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  class="rounded-lg bg-[var(--ds-success-solid)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--ds-success-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                   @click="handleAddMaterial"
                 >Adicionar baixa</button>
               </div>

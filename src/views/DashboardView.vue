@@ -1,13 +1,11 @@
 <script setup>
-import { computed, inject, ref, watch } from 'vue'
+import { computed, inject } from 'vue'
 import { useItems, stockAlertStatus } from '../composables/useItems.js'
-import { useMovements } from '../composables/useMovements.js'
 import { useWorkOrders } from '../composables/useWorkOrders.js'
 import { useMotors } from '../composables/useMotors.js'
 import { useClosings } from '../composables/useClosings.js'
 import { useDestinations } from '../composables/useDestinations.js'
-import AppButton from '../components/ui/AppButton.vue'
-import StatusBadge from '../components/ui/StatusBadge.vue'
+import { buildDestinationAlerts } from '../utils/stockReports.js'
 import { periodClosing, previousMonthPeriod } from '../utils/closingAutomation.js'
 
 const emit = defineEmits(['go'])
@@ -15,15 +13,10 @@ const isAdmin = inject('isAdmin')
 const canOperate = inject('canOperate')
 
 const { items, variations } = useItems()
-const { movements } = useMovements()
 const { workOrders } = useWorkOrders()
 const { motors } = useMotors()
 const { closings } = useClosings()
 const { destinations, getDestFullName } = useDestinations()
-const DASHBOARD_PAGE_SIZE = 6
-const lowStockPage = ref(1)
-const consumedPage = ref(1)
-
 const dashboardCopy = computed(() => {
   if (isAdmin?.value) return {
     title: 'Prioridades do estoque',
@@ -44,42 +37,6 @@ const rows = computed(() => variations.value.map(variation => {
   return { item, variation, status: stockAlertStatus(variation, item) }
 }))
 
-function movementMonthKey(dateValue) {
-  const date = new Date(dateValue)
-  if (Number.isNaN(date.getTime())) return ''
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-}
-
-const currentMonthKey = computed(() => movementMonthKey(new Date()))
-
-const latestMovementMonthKey = computed(() => {
-  const keys = movements.value
-    .map(m => movementMonthKey(m.date))
-    .filter(Boolean)
-    .sort()
-  return keys.at(-1) || currentMonthKey.value
-})
-
-const dashboardMonthKey = computed(() => {
-  const current = currentMonthKey.value
-  return movements.value.some(m => movementMonthKey(m.date) === current)
-    ? current
-    : latestMovementMonthKey.value
-})
-
-const monthMovements = computed(() =>
-  movements.value.filter(m => movementMonthKey(m.date) === dashboardMonthKey.value)
-)
-
-const rankingMovements = computed(() => {
-  const monthRows = monthMovements.value.filter(m => m.type === 'saida')
-  if (monthRows.length) return monthRows
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const recentRows = movements.value.filter(m => m.type === 'saida' && new Date(m.date).getTime() >= cutoff)
-  if (recentRows.length) return recentRows
-  return movements.value.filter(m => m.type === 'saida')
-})
-
 const openOrders = computed(() =>
   workOrders.value.filter(o => !o.maintenanceEndDate)
 )
@@ -95,138 +52,8 @@ const stockStats = computed(() => ({
   totalStock: rows.value.reduce((sum, r) => sum + Number(r.variation.stock || 0), 0),
 }))
 
-const movementStats = computed(() => ({
-  entradas: monthMovements.value.filter(m => m.type === 'entrada').reduce((sum, m) => sum + Number(m.qty || 0), 0),
-  saidas: monthMovements.value.filter(m => m.type === 'saida').reduce((sum, m) => sum + Number(m.qty || 0), 0),
-}))
+const destinationAlerts = computed(() => buildDestinationAlerts(rows.value, destinations.value, getDestFullName))
 
-const lowStockAllRows = computed(() =>
-  rows.value
-    .filter(r => r.status !== 'ok')
-    .slice()
-    .sort((a, b) => {
-      const order = { zero: 0, critical: 1, alert: 2, ok: 3 }
-      return order[a.status] - order[b.status] || String(a.item.name || '').localeCompare(String(b.item.name || ''))
-    })
-)
-
-const lowStockTotalPages = computed(() => Math.max(1, Math.ceil(lowStockAllRows.value.length / DASHBOARD_PAGE_SIZE)))
-const lowStockRows = computed(() => pageSlice(lowStockAllRows.value, lowStockPage.value))
-
-const destinationAlerts = computed(() => {
-  const map = new Map()
-
-  // Vínculos manuais continuam sendo controlados por variação específica.
-  for (const row of rows.value.filter(r => r.status !== 'ok')) {
-    for (const destinationId of row.variation.destinations || []) {
-      addDestinationAlert(map, destinationId, row.status, row)
-    }
-  }
-
-  // Regras amplas são agregadas por nível: uma marca zerada não alerta se outra variação cobre o conjunto.
-  for (const destination of destinations.value) {
-    for (const rule of destination.materialRules || []) {
-      const ruleRows = rows.value.filter(row => itemMatchesDestinationRule(row.item, rule))
-      if (!ruleRows.length) continue
-      const status = aggregateRuleStatus(ruleRows)
-      if (status === 'ok') continue
-      addDestinationAlert(map, destination.id, status, {
-        item: {
-          name: ruleLabel(rule),
-          group: rule.group,
-          category: rule.category,
-          subcategory: rule.subcategory,
-        },
-        variation: {
-          stock: ruleRows.reduce((sum, row) => sum + Number(row.variation.stock || 0), 0),
-        },
-        status,
-      })
-    }
-  }
-
-  return [...map.values()]
-    .map(dest => ({ ...dest, total: dest.zero + dest.critical + dest.alert }))
-    .sort((a, b) =>
-      b.zero - a.zero ||
-      b.total - a.total ||
-      String(a.label).localeCompare(String(b.label))
-    )
-    .slice(0, 8)
-})
-
-function addDestinationAlert(map, destinationId, status, row) {
-  const label = getDestFullName(destinationId)
-  if (!label || status === 'ok') return
-  const current = map.get(destinationId) || {
-    id: destinationId,
-    label,
-    zero: 0,
-    critical: 0,
-    alert: 0,
-    items: [],
-  }
-  current[status] += 1
-  if (current.items.length < 3) current.items.push(row)
-  map.set(destinationId, current)
-}
-
-function aggregateRuleStatus(ruleRows) {
-  const totalStock = ruleRows.reduce((sum, row) => sum + Number(row.variation.stock || 0), 0)
-  const totalMinimum = ruleRows.reduce((sum, row) => sum + Number(row.variation.minStock || row.item.minStock || 0), 0)
-  if (totalStock <= 0) return 'zero'
-  if (totalMinimum > 0 && totalStock <= totalMinimum * 0.5) return 'critical'
-  if (totalMinimum > 0 && totalStock <= totalMinimum) return 'alert'
-  return 'ok'
-}
-
-function itemMatchesDestinationRule(item, rule) {
-  if (!item || !rule?.group || item.group !== rule.group) return false
-  if (rule.category && item.category !== rule.category) return false
-  if (rule.subcategory && item.subcategory !== rule.subcategory) return false
-  return true
-}
-
-function ruleLabel(rule) {
-  return [rule.group, rule.category, rule.subcategory].filter(Boolean).join(' / ')
-}
-
-function variationText(row) {
-  const values = Object.entries(row.variation.values || {}).map(([k, v]) => `${k}: ${v}`)
-  const extras = Object.entries(row.variation.extras || {}).map(([k, v]) => `${k}: ${v}`)
-  return [...values, ...extras].filter(Boolean).join(' / ') || '-'
-}
-
-function inventorySearchFromLabel(label) {
-  return String(label || '').split(' - ')[0]
-}
-
-function groupByMovements(keyFn) {
-  const map = new Map()
-  for (const movement of rankingMovements.value) {
-    const key = keyFn(movement)
-    if (!key) continue
-    const current = map.get(key) || { label: key, qty: 0, count: 0 }
-    current.qty += Number(movement.qty || 0)
-    current.count += 1
-    map.set(key, current)
-  }
-  return [...map.values()].sort((a, b) => b.qty - a.qty)
-}
-
-const topConsumedAllItems = computed(() =>
-  groupByMovements(m => [m.itemName, ...Object.values(m.variationValues || {})].filter(Boolean).join(' - '))
-)
-
-const consumedTotalPages = computed(() => Math.max(1, Math.ceil(topConsumedAllItems.value.length / DASHBOARD_PAGE_SIZE)))
-const consumedCurrentPage = computed(() => Math.min(consumedPage.value, consumedTotalPages.value))
-const topConsumedItems = computed(() => pageSlice(topConsumedAllItems.value, consumedCurrentPage.value))
-
-const topDestinations = computed(() =>
-  groupByMovements(m => m.destination || 'Sem destino').slice(0, 6)
-)
-
-const lastClosing = computed(() => closings.value[0] || null)
 const previousPeriod = previousMonthPeriod()
 const previousMonthClosing = computed(() => periodClosing(closings.value, previousPeriod))
 
@@ -340,27 +167,10 @@ const priorityActions = computed(() => {
   return list.filter(action => !action.target.requiresAdmin || isAdmin.value).slice(0, 6)
 })
 
-function formatMonth(closing) {
-  if (!closing) return '-'
-  return `${String(closing.month).padStart(2, '0')}/${closing.year}`
-}
-
-function pageSlice(list, page) {
-  const start = (page - 1) * DASHBOARD_PAGE_SIZE
-  return list.slice(start, start + DASHBOARD_PAGE_SIZE)
-}
-
 function go(target) {
   emit('go', target)
 }
 
-watch(lowStockAllRows, () => {
-  if (lowStockPage.value > lowStockTotalPages.value) lowStockPage.value = lowStockTotalPages.value
-})
-
-watch(topConsumedAllItems, () => {
-  if (consumedPage.value > consumedTotalPages.value) consumedPage.value = consumedTotalPages.value
-})
 </script>
 
 <template>
@@ -370,10 +180,6 @@ watch(topConsumedAllItems, () => {
         <h1 class="ds-page-title">{{ dashboardCopy.title }}</h1>
         <p class="ds-page-subtitle">{{ dashboardCopy.subtitle }}</p>
       </div>
-      <div v-if="isAdmin" class="dashboard-health" aria-label="Pendências operacionais">
-        <span class="dashboard-health-value">{{ priorityActions.length }}</span>
-        <span class="text-xs ds-muted leading-4">pendências<br>para resolver</span>
-      </div>
     </header>
 
     <section
@@ -381,14 +187,7 @@ watch(topConsumedAllItems, () => {
       :class="isAdmin ? 'dashboard-actions-admin xl:grid-cols-[1.25fr_0.75fr]' : 'dashboard-actions-operator'"
     >
       <div class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-          <div>
-            <h2 class="ds-section-heading">{{ isAdmin ? 'Ações principais' : (canOperate ? 'O que você precisa registrar?' : 'Consultas disponíveis') }}</h2>
-            <p class="mt-1 text-xs ds-muted">{{ isAdmin ? 'Acesse a rotina necessária.' : (canOperate ? 'Entrada e saída usam o mesmo fluxo rápido em toda a aplicação.' : 'A leitura do estoque permanece disponível para consulta.') }}</p>
-          </div>
-          <span class="ds-chip">Operação</span>
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-4">
+        <div class="grid auto-rows-fr grid-cols-1 sm:grid-cols-2 gap-2.5 p-4">
           <button
             v-for="action in dashboardActions"
             :key="action.id"
@@ -405,8 +204,8 @@ watch(topConsumedAllItems, () => {
                 </svg>
               </span>
               <span class="min-w-0">
-                <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ action.label }}</span>
-                <span class="mt-1 block text-xs ds-muted leading-5">{{ action.description }}</span>
+                <span class="ds-action-label block text-sm font-semibold">{{ action.label }}</span>
+                <span class="ds-action-description mt-1 block text-xs leading-5">{{ action.description }}</span>
               </span>
             </div>
           </button>
@@ -419,7 +218,6 @@ watch(topConsumedAllItems, () => {
             <h2 class="ds-section-heading">Prioridades</h2>
             <p class="mt-1 text-xs ds-muted">Pendências com destino direto para resolver.</p>
           </div>
-          <span class="ds-chip">{{ priorityActions.length }}</span>
         </div>
         <div v-if="!priorityActions.length" class="p-4 text-sm ds-muted">Nenhuma prioridade operacional agora.</div>
         <button
@@ -445,174 +243,17 @@ watch(topConsumedAllItems, () => {
     <section class="dashboard-pulse">
       <button class="ds-metric ds-metric-danger text-left cursor-pointer" @click="go({ tab: 'inventario', section: 'estoque', status: 'zero' })">
         <p class="ds-metric-label">Sem estoque</p>
-        <p class="ds-metric-value text-red-500">{{ stockStats.zero }}</p>
+        <p class="ds-metric-value">{{ stockStats.zero }}</p>
       </button>
       <button class="ds-metric ds-metric-warning text-left cursor-pointer" @click="go({ tab: 'inventario', section: 'estoque', status: '' })">
         <p class="ds-metric-label">Críticos / alerta</p>
-        <p class="ds-metric-value text-amber-500">{{ stockStats.critical + stockStats.alert }}</p>
+        <p class="ds-metric-value">{{ stockStats.critical + stockStats.alert }}</p>
       </button>
       <button class="ds-metric ds-metric-warning text-left cursor-pointer" @click="go({ tab: 'inventario', section: 'estoque', status: '' })">
         <p class="ds-metric-label">Destinos em alerta</p>
-        <p class="ds-metric-value text-amber-500">{{ destinationAlerts.length }}</p>
+        <p class="ds-metric-value">{{ destinationAlerts.length }}</p>
       </button>
     </section>
 
-    <details class="dashboard-reports">
-      <summary>
-        <span>
-          <strong>Ver indicadores e relatórios</strong>
-          <small>Consumo, histórico, destinos e ordens abertas</small>
-        </span>
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" />
-        </svg>
-      </summary>
-      <div class="dashboard-reports-content">
-    <section class="dashboard-ledger" aria-label="Indicadores de acompanhamento">
-      <button class="ds-metric ds-metric-info text-left cursor-pointer" @click="go({ tab: 'movimentacoes', subTab: 'historico' })">
-        <p class="ds-metric-label">Saídas no mês</p>
-        <p class="ds-metric-value text-red-500">{{ movementStats.saidas }}</p>
-      </button>
-      <button class="ds-metric ds-metric-brand text-left cursor-pointer" @click="go({ tab: 'ordens', subTab: 'ordens' })">
-        <p class="ds-metric-label">OS abertas</p>
-        <p class="ds-metric-value">{{ openOrders.length }}</p>
-      </button>
-      <button class="ds-metric ds-metric-success text-left cursor-pointer" @click="go({ tab: 'motores' })">
-        <p class="ds-metric-label">Motores em manutenção</p>
-        <p class="ds-metric-value">{{ motorsInMaintenance.length }}</p>
-      </button>
-      <button class="ds-metric ds-metric-brand text-left cursor-pointer" @click="go({ tab: 'inventario', section: 'fechamentos', requiresAuth: true })">
-        <p class="ds-metric-label">Último fechamento</p>
-        <p class="ds-metric-value">{{ formatMonth(lastClosing) }}</p>
-      </button>
-    </section>
-
-    <div class="dashboard-details grid grid-cols-1 xl:grid-cols-2 gap-4">
-      <section class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-          <h2 class="ds-section-heading">Estoque em atenção</h2>
-          <div class="flex items-center gap-2">
-            <span class="ds-chip">{{ lowStockAllRows.length }} itens</span>
-            <div v-if="lowStockTotalPages > 1" class="flex items-center gap-1">
-              <AppButton variant="ghost" size="xs" :disabled="lowStockPage <= 1" @click="lowStockPage--">Anterior</AppButton>
-              <span class="ds-chip">{{ lowStockPage }}/{{ lowStockTotalPages }}</span>
-              <AppButton variant="ghost" size="xs" :disabled="lowStockPage >= lowStockTotalPages" @click="lowStockPage++">Próxima</AppButton>
-            </div>
-          </div>
-        </div>
-        <div v-if="!lowStockRows.length" class="p-4 text-sm ds-muted">Nenhum alerta de estoque.</div>
-        <button
-          v-for="row in lowStockRows"
-          :key="row.variation.id"
-          class="ds-list-row text-left p-4 cursor-pointer"
-          @click="go({ tab: 'inventario', section: 'estoque', status: row.status, search: row.item.name || '' })"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <p class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ row.item.name }}</p>
-              <p class="text-xs ds-muted truncate">{{ row.item.group }} / {{ row.item.category }} / {{ row.item.subcategory }}</p>
-              <p class="text-xs ds-subtle truncate">{{ variationText(row) }}</p>
-            </div>
-            <span class="ds-chip">{{ row.variation.stock }} {{ row.item.unit }}</span>
-          </div>
-        </button>
-      </section>
-
-      <section class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-          <h2 class="ds-section-heading">Alertas por destino</h2>
-          <span class="ds-chip">{{ destinationAlerts.length }} destinos</span>
-        </div>
-        <div v-if="!destinationAlerts.length" class="p-4 text-sm ds-muted">Nenhum destino com material em alerta.</div>
-        <button
-          v-for="dest in destinationAlerts"
-          :key="dest.id"
-          class="ds-list-row text-left p-4 cursor-pointer"
-          @click="go({ tab: 'inventario', section: 'estoque', status: '' })"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <p class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ dest.label }}</p>
-              <p class="text-xs ds-muted truncate">
-                {{ dest.items.map(row => row.item.name).join(' / ') }}
-              </p>
-            </div>
-            <div class="flex flex-wrap justify-end gap-1 shrink-0">
-              <span v-if="dest.zero" class="ds-chip text-red-500">{{ dest.zero }} zerados</span>
-              <span v-if="dest.critical + dest.alert" class="ds-chip text-amber-500">{{ dest.critical + dest.alert }} alerta</span>
-            </div>
-          </div>
-        </button>
-      </section>
-
-      <section class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-          <h2 class="ds-section-heading">Mais consumidos no mês</h2>
-          <div class="flex items-center gap-2">
-            <span class="ds-chip">Ranking</span>
-            <div v-if="consumedTotalPages > 1" class="flex items-center gap-1">
-              <AppButton variant="ghost" size="xs" :disabled="consumedPage <= 1" @click="consumedPage--">Anterior</AppButton>
-              <span class="ds-chip">{{ consumedCurrentPage }}/{{ consumedTotalPages }}</span>
-              <AppButton variant="ghost" size="xs" :disabled="consumedPage >= consumedTotalPages" @click="consumedPage++">Próxima</AppButton>
-            </div>
-          </div>
-        </div>
-        <div v-if="!topConsumedItems.length" class="p-4 text-sm ds-muted">Nenhuma saída registrada neste mês.</div>
-        <button
-          v-for="item in topConsumedItems"
-          :key="item.label"
-          type="button"
-          class="ds-list-row w-full p-4 text-left cursor-pointer"
-          @click="go({ tab: 'movimentacoes', subTab: 'historico', search: inventorySearchFromLabel(item.label) })"
-        >
-          <div class="flex items-center justify-between gap-3">
-            <p class="text-sm text-gray-900 dark:text-gray-100 truncate">{{ item.label }}</p>
-            <span class="ds-chip">{{ item.qty }}</span>
-          </div>
-        </button>
-      </section>
-
-      <section class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 class="ds-section-heading">Consumo por destino no mês</h2>
-        </div>
-        <div v-if="!topDestinations.length" class="p-4 text-sm ds-muted">Nenhum destino com saída neste mês.</div>
-        <button
-          v-for="dest in topDestinations"
-          :key="dest.label"
-          type="button"
-          class="ds-list-row w-full p-4 text-left cursor-pointer"
-          @click="go({ tab: 'movimentacoes', subTab: 'historico', search: dest.label })"
-        >
-          <div class="flex items-center justify-between gap-3">
-            <p class="text-sm text-gray-900 dark:text-gray-100 truncate">{{ dest.label }}</p>
-            <span class="ds-chip">{{ dest.qty }}</span>
-          </div>
-        </button>
-      </section>
-
-      <section class="ds-list-panel">
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 class="ds-section-heading">Ordens abertas</h2>
-        </div>
-        <div v-if="!openOrders.length" class="p-4 text-sm ds-muted">Nenhuma OS aberta.</div>
-        <button
-          v-for="order in openOrders.slice(0, 6)"
-          :key="order.id"
-          class="ds-list-row text-left p-4 cursor-pointer"
-          @click="go({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
-        >
-          <div class="flex items-center justify-between gap-3">
-            <div class="min-w-0">
-              <p class="font-medium text-gray-900 dark:text-gray-100 truncate">OS #{{ order.number }} - {{ order.title }}</p>
-              <p class="text-xs ds-muted truncate">{{ order.requestedBy || '-' }} / {{ order.destinationName || order.maintenanceLocationName || '-' }}</p>
-            </div>
-            <StatusBadge status="aberto" label="Aberta" size="xs" />
-          </div>
-        </button>
-      </section>
-    </div>
-      </div>
-    </details>
   </div>
 </template>

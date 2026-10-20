@@ -9,6 +9,8 @@ import { useToast } from '../composables/useToast.js'
 import FechamentosView from './FechamentosView.vue'
 import VariationSheet from '../components/ui/VariationSheet.vue'
 import AppButton from '../components/ui/AppButton.vue'
+import AttributeBadges from '../components/ui/AttributeBadges.vue'
+import { variationAttributeRows } from '../utils/attributes.js'
 import AppLink from '../components/ui/AppLink.vue'
 import AppDialog from '../components/ui/AppDialog.vue'
 import EpiControlTab from '../components/inventario/EpiControlTab.vue'
@@ -35,7 +37,7 @@ const isLoggedIn = inject('isLoggedIn')
 const canOperate = inject('canOperate')
 const canAccessClosings = computed(() => Boolean(isLoggedIn?.value ?? isLoggedIn))
 const canAccessEpiControl = computed(() => Boolean(isLoggedIn?.value ?? isLoggedIn))
-const emit = defineEmits(['quick-movement', 'open-work-order', 'update:section', 'update:status', 'update:search', 'update:variation'])
+const emit = defineEmits(['quick-movement', 'open-work-order', 'navigate', 'update:section', 'update:status', 'update:search', 'update:variation'])
 
 const { items, getVariationsForItem, getCategoriesForGroup, getSubcategoriesForCategory } = useItems()
 const { movements, addMovement } = useMovements()
@@ -359,6 +361,11 @@ const filteredRows = computed(() => {
 })
 const sortedFilteredRows = computed(() => sortRows(filteredRows.value))
 const selectedVariationIds = ref([])
+const selectionMode = ref(false)
+function toggleSelectionMode() {
+  selectionMode.value = !selectionMode.value
+  selectedVariationIds.value = []
+}
 const bulkEdit = ref(null)
 const selectedRows = computed(() => allRows.value.filter(row => selectedVariationIds.value.includes(row.variation.id)))
 const allFilteredSelected = computed(() => filteredRows.value.length > 0 && filteredRows.value.every(row => selectedVariationIds.value.includes(row.variation.id)))
@@ -699,6 +706,19 @@ function closeVariationSheet() {
   sheetRow.value = null
   emit('update:variation', '')
 }
+
+function openSheetInCatalog() {
+  if (!sheetRow.value) return
+  const { item } = sheetRow.value
+  emit('navigate', {
+    tab: 'catalogo',
+    itemId: item.id,
+    group: item.group,
+    category: item.category || '',
+    subcategory: item.subcategory || '',
+    clearSearch: true,
+  })
+}
 watch([() => props.initialVariationId, allRows], () => {
   sheetRow.value = allRows.value.find(row => row.variation.id === props.initialVariationId) || null
 }, { immediate: true })
@@ -980,7 +1000,7 @@ function exportCSV() {
           >
             {{ tab.label }}
             <span
-              v-if="tab.countKey && counts[tab.countKey]"
+              v-if="tab.id !== 'all' && tab.countKey && counts[tab.countKey]"
               class="rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
               :class="FILTER_COUNT_CLASS[tab.countKey]"
             >{{ counts[tab.countKey] }}</span>
@@ -1051,13 +1071,8 @@ function exportCSV() {
           </div>
         </div>
       </div>
-    </div>
 
     <!-- Empty: no alerts -->
-    <div class="ds-query-bar" role="search" aria-label="Busca no estoque">
-      <input v-model="searchQuery" class="ds-query-input" type="search" aria-label="Buscar no estoque" placeholder="Buscar material, medida, marca ou local…" />
-      <AppButton v-if="searchQuery" variant="secondary" @click="searchQuery = ''">Limpar</AppButton>
-    </div>
     <div v-if="alertRows.length === 0 && filterStatus !== 'all'" class="flex flex-col items-center justify-center py-20 text-center">
       <svg class="w-12 h-12 text-green-300 dark:text-green-700 mb-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -1067,7 +1082,7 @@ function exportCSV() {
     </div>
 
     <!-- Body: facet sidebar + table -->
-    <div v-if="showBody" class="flex flex-col items-stretch overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 md:flex-row md:items-start">
+    <div v-if="showBody" class="flex flex-col items-stretch overflow-hidden rounded-b-xl border-t border-gray-200 dark:border-gray-700 md:flex-row md:items-start">
 
       <!-- ===== Facet sidebar ===== -->
       <div class="inventory-filter-sidebar max-h-56 w-full flex-shrink-0 self-stretch space-y-2 overflow-y-auto border-b border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800 md:max-h-none md:w-44 md:border-b-0 md:border-r">
@@ -1249,23 +1264,33 @@ function exportCSV() {
       <!-- ===== Main area ===== -->
       <div class="flex-1 min-w-0 bg-white dark:bg-gray-900">
 
-        <!-- Empty: filter yields nothing -->
+          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 text-sm dark:border-gray-700">
+            <div class="ds-query-bar !mb-0 min-w-0 flex-1 basis-64" role="search" aria-label="Busca no estoque">
+              <input v-model="searchQuery" class="ds-query-input" type="search" aria-label="Buscar no estoque" placeholder="Buscar material, medida, marca ou local…" />
+              <AppButton v-if="searchQuery" variant="secondary" size="sm" @click="searchQuery = ''">Limpar</AppButton>
+            </div>
+            <div v-if="isAdmin" class="flex flex-wrap items-center gap-3">
+              <template v-if="selectionMode">
+                <label class="flex items-center gap-2"><input type="checkbox" :checked="allFilteredSelected" @change="selectFiltered($event.target.checked)" /> Selecionar todos</label>
+                <span v-if="selectedRows.length" class="font-medium">{{ selectedRows.length }} selecionadas</span>
+                <AppButton size="sm" :disabled="!selectedRows.length" @click="openBulkEdit()">Editar seleção</AppButton>
+                <button v-if="selectedRows.length" type="button" class="text-xs text-gray-500 hover:underline" @click="selectedVariationIds = []">Limpar seleção</button>
+              </template>
+              <AppButton variant="secondary" size="sm" :aria-pressed="selectionMode" @click="toggleSelectionMode">
+                {{ selectionMode ? 'Cancelar seleção' : 'Selecionar itens' }}
+              </AppButton>
+            </div>
+          </header>
+        <!-- Keep search available when no rows match. -->
         <div v-if="filteredRows.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500 text-sm">
           Nenhum resultado para os filtros selecionados.
         </div>
-
         <div v-else>
-          <div v-if="isAdmin" class="flex flex-wrap items-center gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3 text-sm dark:border-gray-700 dark:bg-gray-800/60">
-            <label class="flex items-center gap-2"><input type="checkbox" :checked="allFilteredSelected" @change="selectFiltered($event.target.checked)" /> Selecionar {{ filteredRows.length }} resultados</label>
-            <span v-if="selectedRows.length" class="font-medium">{{ selectedRows.length }} selecionadas</span>
-            <AppButton size="sm" :disabled="!selectedRows.length" @click="openBulkEdit()">Editar seleção</AppButton>
-            <button v-if="selectedRows.length" type="button" class="text-xs text-gray-500 hover:underline" @click="selectedVariationIds = []">Limpar seleção</button>
-          </div>
           <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-                <th v-if="isAdmin" class="w-10 px-3"><span class="sr-only">Selecionar variação</span></th>
+                <th v-if="isAdmin && selectionMode" class="w-10 px-3"><span class="sr-only">Selecionar variação</span></th>
                 <th class="px-4 py-2.5 text-left font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-[200px]">
                   <button type="button" class="inline-flex items-center gap-1 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer" @click="setSort('item')">
                     Item <span class="text-[10px]">{{ sortArrow('item') }}</span>
@@ -1400,39 +1425,28 @@ function exportCSV() {
                 class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40 transition-colors cursor-pointer"
                 @click="openVariationSheet(row)"
               >
-                <td v-if="isAdmin" class="px-3 py-3" @click.stop><input v-model="selectedVariationIds" type="checkbox" :value="row.variation.id" :aria-label="`Selecionar ${row.item.name}, ${Object.values(row.variation.values || {}).filter(Boolean).join(', ')}`" /></td>
+                <td v-if="isAdmin && selectionMode" class="px-3 py-3" @click.stop><input v-model="selectedVariationIds" type="checkbox" :value="row.variation.id" :aria-label="`Selecionar ${row.item.name}, ${Object.values(row.variation.values || {}).filter(Boolean).join(', ')}`" /></td>
                 <!-- Item -->
                 <td class="px-3 py-3 md:px-4">
                   <AppLink class="font-medium text-gray-800 dark:text-gray-100 leading-snug hover:underline" :target="{ tab: 'inventario', variationId: row.variation.id }" @navigate="openVariationSheet(row)" @click.stop>{{ row.item.name }}</AppLink>
                   <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight">{{ hierarchyLabel(row.item) }}</p>
                   <p class="mt-1 line-clamp-2 text-[11px] leading-tight text-gray-500 dark:text-gray-400 md:hidden">
-                    {{ Object.values({ ...(row.variation.values || {}), ...(row.variation.extras || {}) }).filter(Boolean).join(' · ') || 'Variação única' }}
+                    {{ variationAttributeRows(row.item, row.variation).map(attribute => attribute.value).join(' · ') || 'Variação única' }}
                   </p>
                 </td>
 
                 <!-- Variação: attribute pills -->
                 <td v-if="isColumnVisible('variation')" class="hidden px-4 py-3 md:table-cell">
                   <div class="flex flex-wrap gap-1">
-                    <!-- Template attribute pills (blue) -->
-                    <template v-for="attr in (row.item.attributes || [])" :key="attr">
+                    <template v-for="attribute in variationAttributeRows(row.item, row.variation, true)" :key="`${attribute.extra}:${attribute.key}`">
                       <span
-                        v-if="row.variation.values && row.variation.values[attr]"
+                        v-if="String(attribute.value ?? '').trim()"
                         class="ds-attribute-tag inline-flex items-center gap-0.5 rounded border px-2 py-0.5 text-[11px]"
                       >
-                        <span class="font-medium">{{ attr }}:</span>
-                        <span>{{ row.variation.values[attr] }}</span>
+                        <span class="font-medium">{{ attribute.key }}:</span>
+                        <span>{{ attribute.value }}</span>
                       </span>
-                      <button v-else-if="isAdmin" type="button" class="rounded border border-dashed border-gray-300 px-2 py-0.5 text-[11px] text-gray-500 hover:border-primary-500 hover:text-primary-600 dark:border-gray-600" @click.stop="openBulkEdit(row, 'attribute', attr)">{{ attr }}: preencher</button>
-                    </template>
-                    <!-- Extra attribute pills (yellow) -->
-                    <template v-for="(val, key) in (row.variation.extras || {})" :key="'x-' + key">
-                      <span
-                        v-if="val"
-                        class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-800"
-                      >
-                        <span class="font-medium">{{ key }}:</span>
-                        <span>{{ val }}</span>
-                      </span>
+                      <button v-else-if="isAdmin && !attribute.extra" type="button" class="rounded border border-dashed border-gray-300 px-2 py-0.5 text-[11px] text-gray-500 hover:border-primary-500 hover:text-primary-600 dark:border-gray-600" @click.stop="openBulkEdit(row, 'attribute', attribute.key)">{{ attribute.key }}: preencher</button>
                     </template>
                     <!-- Fallback -->
                     <span
@@ -1669,6 +1683,7 @@ function exportCSV() {
       </div>
     </div>
 
+    </div>
     </template>
 
     <EpiControlTab
@@ -1688,9 +1703,11 @@ function exportCSV() {
       :can-manage="Boolean(canOperate?.value ?? canOperate)"
       :can-adjust="Boolean(isAdmin?.value ?? isAdmin)"
       :can-edit-details="Boolean(isAdmin?.value ?? isAdmin)"
+      show-catalog-link
       @close="closeVariationSheet"
       @quick-movement="quickSheetMovement"
       @adjust-stock="adjustSheetStock"
+      @go-to-catalog="openSheetInCatalog"
       @open-work-order="order => emit('open-work-order', order)"
     />
 
@@ -1706,26 +1723,7 @@ function exportCSV() {
             <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Histórico por item / variação</p>
             <h2 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">{{ historyRow.item.name }}</h2>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate">{{ hierarchyLabel(historyRow.item) }}</p>
-            <div class="mt-3 flex flex-wrap gap-1.5">
-              <template v-for="attr in (historyRow.item.attributes || [])" :key="attr">
-                <span
-                  v-if="historyRow.variation.values && historyRow.variation.values[attr]"
-                  class="ds-attribute-tag inline-flex items-center gap-0.5 rounded border px-2 py-0.5 text-[11px]"
-                >
-                  <span class="font-medium">{{ attr }}:</span>
-                  <span>{{ historyRow.variation.values[attr] }}</span>
-                </span>
-              </template>
-              <template v-for="(val, key) in (historyRow.variation.extras || {})" :key="'history-' + key">
-                <span
-                  v-if="val"
-                  class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-800"
-                >
-                  <span class="font-medium">{{ key }}:</span>
-                  <span>{{ val }}</span>
-                </span>
-              </template>
-            </div>
+            <AttributeBadges class="mt-3" :item="historyRow.item" :variation="historyRow.variation" compact />
           </div>
           <button
             class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"

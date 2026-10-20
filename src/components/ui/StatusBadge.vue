@@ -30,15 +30,6 @@ const tone = computed(() => {
   }[props.status] || props.status || 'neutral'
 })
 
-const toneClasses = computed(() => ({
-  brand: 'bg-primary-600 text-[var(--ds-primary-text)]',
-  success: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-700 dark:text-white',
-  warning: 'bg-amber-100 text-amber-900 dark:bg-amber-700 dark:text-white',
-  danger: 'bg-red-100 text-red-800 dark:bg-red-700 dark:text-white',
-  neutral: 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-100',
-}[tone.value] || 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-100')
-)
-
 const sizeClasses = computed(() => ({
   xs: 'px-1.5 py-0.5 text-[10px]',
   sm: 'px-2 py-0.5 text-[11px]',
@@ -49,9 +40,17 @@ const sizeClasses = computed(() => ({
 
 <template>
   <span
-    class="inline-flex items-center whitespace-nowrap rounded-full font-medium leading-none"
-    :class="[toneClasses, sizeClasses]"
+    class="status-badge inline-flex items-center whitespace-nowrap rounded-full font-medium leading-none"
+    :class="[`status-badge-${tone}`, sizeClasses]"
   >
     {{ resolvedLabel }}
   </span>
 </template>
+
+<style scoped>
+.status-badge { --badge-color: var(--ds-text-muted); color: var(--badge-color); background: color-mix(in srgb, var(--badge-color) 12%, var(--ds-panel)); border: 1px solid color-mix(in srgb, var(--badge-color) 24%, var(--ds-panel)); }
+.status-badge-brand { --badge-color: var(--ds-info); }
+.status-badge-success { --badge-color: var(--ds-success); }
+.status-badge-warning { --badge-color: var(--ds-warning); }
+.status-badge-danger { --badge-color: var(--ds-danger); }
+</style>
