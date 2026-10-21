@@ -25,6 +25,22 @@
 @custom-variant dark (&:where(html.dark, html.dark *));
 
 @layer base {
+  dialog {
+    color: var(--ds-text);
+  }
+
+  /* Evita botões nativos com fundo próprio; mantém tipo, limites e teclado. */
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
   :root {
     color-scheme: light;
     --ds-bg: Canvas;
