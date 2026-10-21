@@ -7,6 +7,8 @@ test('navigation routes round-trip encoded filters and record ids', () => {
   assert.deepEqual(parseRoute(routeHref({ tab: 'relatorios', subTab: 'estoque' })), { tab: 'relatorios', subTab: 'estoque' })
   const route = { tab: 'catalogo', group: 'Botas de Segurança', search: 'Composite/42', itemId: 'item 1', variationId: 'var&2' }
   assert.deepEqual(parseRoute(routeHref(route)), route)
+  const highlighted = { tab: 'catalogo', itemId: 'item 1', highlightVariationId: 'var&2' }
+  assert.deepEqual(parseRoute(routeHref(highlighted)), highlighted)
   assert.equal(routeIdentity({ ...route, search: 'other', status: 'critical' }), routeIdentity(route))
   assert.equal(parseRoute('#/unknown'), null)
 })

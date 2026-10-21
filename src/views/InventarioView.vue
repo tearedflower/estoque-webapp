@@ -709,10 +709,11 @@ function closeVariationSheet() {
 
 function openSheetInCatalog() {
   if (!sheetRow.value) return
-  const { item } = sheetRow.value
+  const { item, variation } = sheetRow.value
   emit('navigate', {
     tab: 'catalogo',
     itemId: item.id,
+    highlightVariationId: variation.id,
     group: item.group,
     category: item.category || '',
     subcategory: item.subcategory || '',

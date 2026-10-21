@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { sortedAttributeNames, variationAttributeRows } from '../../utils/attributes.js'
+import { orderedAttributeNames, variationAttributeRows } from '../../utils/attributes.js'
 import { useAuth } from '../../composables/useAuth.js'
 import { stockAlertStatus, useItems } from '../../composables/useItems.js'
 import { useDestinations } from '../../composables/useDestinations.js'
@@ -749,7 +749,7 @@ async function saveEdit() {
           <div v-if="targetItem?.attributes?.length">
             <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</h4>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label v-for="attribute in sortedAttributeNames(targetItem.attributes)" :key="attribute" class="block">
+              <label v-for="attribute in orderedAttributeNames(targetItem)" :key="attribute" class="block">
                 <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">{{ attribute }}</span>
                 <input
                   v-model="editForm.values[attribute]"

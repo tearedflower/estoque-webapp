@@ -12,9 +12,12 @@ export function shiftReportMonth(month, offset) {
   return movementMonthKey(new Date(year, value - 1 + offset, 1, 12))
 }
 
-export function buildMovementReport(movements, month) {
-  const selected = /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
-    ? movements.filter(movement => movementMonthKey(movement.date) === month) : []
+export function buildMovementReport(movements, period, { group = '', category = '', destination = null } = {}) {
+  const selected = /^\d{4}(-(0[1-9]|1[0-2]))?$/.test(period)
+    ? movements.filter(movement => movementMonthKey(movement.date).slice(0, period.length) === period
+      && (!group || movement.itemGroup === group)
+      && (!category || movement.itemCategory === category)
+      && (destination === null || (String(movement.destination || '').trim() || 'Sem destino informado') === destination)) : []
   const adjustments = selected.filter(movement => ['ajuste', 'conferencia inicial'].includes(normalizeSearchText(movement.docRef)))
   const adjustmentSet = new Set(adjustments)
   const regular = selected.filter(movement => !adjustmentSet.has(movement) && ['entrada', 'saida'].includes(movement.type))
@@ -28,7 +31,7 @@ export function buildMovementReport(movements, month) {
     const key = JSON.stringify([movement.variationId || [movement.itemId || movement.itemName, attributes], unit])
     variationIds.add(key)
     if (movement.type !== 'saida') continue
-    const material = materials.get(key) || { id: key, name: movement.itemName || 'Material sem nome', unit, qty: 0, count: 0, values: movement.variationValues, extras: movement.variationExtras }
+    const material = materials.get(key) || { id: key, itemId: movement.itemId, name: movement.itemName || 'Material sem nome', unit, qty: 0, count: 0, values: movement.variationValues, extras: movement.variationExtras }
     material.qty += qty
     material.count++
     materials.set(key, material)

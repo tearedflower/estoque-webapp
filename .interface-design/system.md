@@ -28,7 +28,9 @@ Assinatura do produto: ficha de circulacao que conecta material, saldo, local ou
 
 - Nunca combinar `bg-primary-*` com `text-white` assumindo que a escala primaria e escura.
 - Usar `--ds-primary-text` sobre fundos primarios; nunca presumir texto branco.
+- Nos modos claro e escuro, acoes, navegacao ativa e destaques solidos usam o mesmo laranja vivo da paleta central, sem o antigo marrom. Selecao de destinos permanece solida.
 - Estados ativos usam `--ds-active-bg` com `--ds-active-text`.
+- Atributos usam ordem alfabetica por padrao; a ordem manual definida no modelo de item prevalece e fica salva por modelo em display_order.itemAttributes.
 - Tags de atributos usam `.ds-attribute-tag`: `--ds-tag-bg`, `--ds-tag-border` e `--ds-tag-text`, iguais em todas as telas.
 - No Industrial claro: canvas cinza frio, paineis brancos, campos discretos e texto secundario com contraste legivel.
 - No Industrial escuro: grafite azulado sem preto puro, superficies proximas, bordas discretas e texto claro sem branco puro.

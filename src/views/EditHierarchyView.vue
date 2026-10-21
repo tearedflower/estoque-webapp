@@ -1,9 +1,12 @@
 <script setup>
 import { useEditHierarchyState } from '../composables/useEditHierarchyState.js'
 import AppDialog from '../components/ui/AppDialog.vue'
+import { orderedAttributeNames } from '../utils/attributes.js'
 
 const {
   units,
+  moveAttribute,
+  reorderingAttributes,
   uniqueGroups,
   getCategoriesForGroup,
   getSubcategoriesForCategory,
@@ -361,7 +364,7 @@ const {
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ item.name }}</p>
                   <div class="mt-1 flex flex-wrap gap-1">
-                    <span v-for="attr in (item.attributes || [])" :key="attr" class="px-1.5 py-0.5 text-[11px] rounded bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">{{ attr }}</span>
+                    <span v-for="attr in orderedAttributeNames(item)" :key="attr" class="px-1.5 py-0.5 text-[11px] rounded bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">{{ attr }}</span>
                     <span v-if="!(item.attributes || []).length" class="text-xs text-gray-400 dark:text-gray-500 italic">Sem atributos</span>
                   </div>
                 </div>
@@ -565,7 +568,7 @@ const {
                 <div>
                   <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ item.name }}</p>
                   <div class="mt-1 flex flex-wrap gap-1">
-                    <span v-for="attr in (item.attributes || [])" :key="attr" class="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">{{ attr }}</span>
+                    <span v-for="attr in orderedAttributeNames(item)" :key="attr" class="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">{{ attr }}</span>
                     <span v-if="!(item.attributes || []).length" class="text-xs italic text-gray-400 dark:text-gray-500">Sem atributos</span>
                   </div>
                 </div>
@@ -938,7 +941,7 @@ const {
                 <p class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5">Atributos</p>
                 <div class="flex flex-wrap gap-1">
                   <span
-                    v-for="(attr, aIdx) in (item.attributes || [])"
+                    v-for="(attr, aIdx) in orderedAttributeNames(item)"
                     :key="attr"
                     :draggable="!isEditingAttr(item.id, attr)"
                     @dragstart.stop="!isEditingAttr(item.id, attr) && onDragStart('attr:' + item.id, aIdx, $event)"
@@ -1179,7 +1182,7 @@ const {
 
         <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</p>
         <div v-if="editingItemModel.attributes?.length" class="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
-          <div v-for="attr in editingItemModel.attributes" :key="attr" class="flex min-h-11 items-center justify-between gap-3 px-3 py-2">
+          <div v-for="(attr, index) in orderedAttributeNames(editingItemModel)" :key="attr" class="flex min-h-11 flex-wrap items-center justify-between gap-3 px-3 py-2">
             <template v-if="isEditingAttr(editingItemModel.id, attr)">
               <input v-model="editAttrValue" class="ds-input min-w-0 flex-1" autofocus @keydown="onAttrEditKeydown" />
               <div class="flex shrink-0 gap-2">
@@ -1190,6 +1193,8 @@ const {
             <template v-else>
               <span class="font-medium text-gray-800 dark:text-gray-100">{{ attr }}</span>
               <div class="flex shrink-0 gap-1">
+                <button type="button" class="attribute-order-button" :aria-label="`Mover ${attr} para cima`" title="Mover para cima" :disabled="index === 0 || reorderingAttributes" @click="moveAttribute(editingItemModel.id, index, index - 1)">↑</button>
+                <button type="button" class="attribute-order-button" :aria-label="`Mover ${attr} para baixo`" title="Mover para baixo" :disabled="index === editingItemModel.attributes.length - 1 || reorderingAttributes" @click="moveAttribute(editingItemModel.id, index, index + 1)">↓</button>
                 <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:text-gray-300 dark:hover:bg-gray-800" @click="startAttrEdit(editingItemModel.id, attr)">Renomear</button>
                 <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-gray-300 dark:hover:bg-red-900/20" @click="onRemoveAttr(editingItemModel.id, attr)">Excluir</button>
               </div>
@@ -1382,3 +1387,10 @@ const {
     </div>
   </AppDialog>
 </template>
+
+<style scoped>
+.attribute-order-button { min-width: 32px; min-height: 36px; border: 1px solid var(--ds-border); border-radius: 6px; color: var(--ds-text); cursor: pointer; }
+.attribute-order-button:hover { background: var(--ds-surface-hover); }
+.attribute-order-button:disabled { opacity: .35; cursor: default; }
+.attribute-order-button:focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: 2px; }
+</style>

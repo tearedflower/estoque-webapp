@@ -16,7 +16,7 @@ import {
 import VariationSheet from '../components/ui/VariationSheet.vue'
 import AppDialog from '../components/ui/AppDialog.vue'
 import AppButton from '../components/ui/AppButton.vue'
-import { sortedAttributeNames } from '../utils/attributes.js'
+import { sortedAttributeNames, orderedAttributeNames } from '../utils/attributes.js'
 import AppLink from '../components/ui/AppLink.vue'
 import AiCatalogDialog from '../components/catalog/AiCatalogDialog.vue'
 
@@ -27,9 +27,9 @@ const props = defineProps({
   search: { type: String, default: '' },
   initialItemId: { type: String, default: '' },
   initialVariationId: { type: String, default: '' },
-  filtersOpen: { type: Boolean, default: false },
+  initialHighlightVariationId: { type: String, default: '' },
 })
-const emit = defineEmits(['update:search', 'update:record', 'quick-movement', 'open-work-order', 'toggle-sidebar'])
+const emit = defineEmits(['update:search', 'update:record', 'quick-movement', 'open-work-order'])
 
 const {
   items, variations,
@@ -147,14 +147,24 @@ const varSearchNorm = computed(() => varSearchQuery.value.trim().toLowerCase())
 watch(() => activeGroup.value, () => { viewingItem.value = null; setViewingItem(null) })
 watch(() => activeCategory.value, () => { viewingItem.value = null; setViewingItem(null) })
 
-function openItem(item, variationId = '') {
+const highlightedVariationId = ref('')
+const variationTable = ref(null)
+watch(highlightedVariationId, async id => {
+  if (!id) return
+  await nextTick()
+  requestAnimationFrame(() => variationTable.value?.querySelector('[data-catalog-highlight="true"]')?.scrollIntoView({ block: 'center' }))
+}, { flush: 'post' })
+
+function openItem(item, variationId = '', highlightVariationId = '') {
   viewingItem.value = item
   varSearchQuery.value = ''
+  highlightedVariationId.value = getVariationsForItem(item.id).some(row => row.id === highlightVariationId) ? highlightVariationId : ''
   setViewingItem(item.id)
-  emit('update:record', { itemId: item.id, variationId })
+  emit('update:record', { itemId: item.id, variationId, highlightVariationId: highlightedVariationId.value })
 }
 
 function closeItem() {
+  highlightedVariationId.value = ''
   viewingItem.value = null
   varSearchQuery.value = ''
   setViewingItem(null)
@@ -570,13 +580,13 @@ function openVariationSheet(v, initialTab = 'data') {
   emit('update:record', { itemId: v.itemId, variationId: v.id })
 }
 
-function openItemById(itemId) {
+function openItemById(itemId, highlightVariationId = '') {
   const item = items.value.find(row => row.id === itemId)
   if (!item) return false
   if (activeGroup.value !== (item.group || null)) setActiveGroup(item.group || null)
   setActiveCategory(item.category || null)
   setActiveSubcategory(item.subcategory || null)
-  nextTick(() => openItem(item))
+  nextTick(() => openItem(item, '', highlightVariationId))
   return true
 }
 
@@ -608,12 +618,12 @@ function closeVariationSheet() {
   emit('update:record', { itemId: viewingItem.value?.id })
 }
 
-watch([() => props.initialItemId, () => props.initialVariationId, items, variations], () => {
+watch([() => props.initialItemId, () => props.initialVariationId, () => props.initialHighlightVariationId, items, variations], () => {
   if (props.initialVariationId) {
     if (sheetVariationId.value !== props.initialVariationId) openVariationById(props.initialVariationId)
   } else {
     sheetVariationId.value = ''
-    if (props.initialItemId && viewingItem.value?.id !== props.initialItemId) openItemById(props.initialItemId)
+    if (props.initialItemId && (viewingItem.value?.id !== props.initialItemId || highlightedVariationId.value !== props.initialHighlightVariationId)) openItemById(props.initialItemId, props.initialHighlightVariationId)
     if (!props.initialItemId) { viewingItem.value = null; setViewingItem(null) }
   }
 }, { immediate: true })
@@ -762,20 +772,6 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
 <template>
   <div class="relative">
     <div class="catalog-toolbar">
-    <AppButton
-      variant="secondary"
-      size="icon"
-      class="catalog-filter-toggle !h-10 !w-10 !min-w-10"
-      aria-controls="mobile-side-panel"
-      :aria-expanded="filtersOpen"
-      :aria-label="filtersOpen ? 'Fechar categorias e filtros' : 'Mostrar categorias e filtros'"
-      :title="filtersOpen ? 'Fechar categorias e filtros' : 'Mostrar categorias e filtros'"
-      @click="emit('toggle-sidebar')"
-    >
-      <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h16.5M6.75 12h10.5m-7.5 6.75h4.5" />
-      </svg>
-    </AppButton>
     <div class="ds-query-bar" role="search" aria-label="Busca de materiais">
       <input class="ds-query-input" type="search" aria-label="Buscar materiais" placeholder="Buscar material, medida, marca ou local…" :value="searchQuery" @input="searchCatalog($event.target.value)" />
       <AppButton v-if="searchQuery" variant="secondary" @click="searchCatalog('')">Limpar</AppButton>
@@ -927,7 +923,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
       <!-- Variations table — condensed -->
       <div class="ds-table-wrap">
         <div class="overflow-x-auto">
-          <table class="ds-table min-w-full md:min-w-[760px]">
+          <table ref="variationTable" class="ds-table min-w-full md:min-w-[760px]">
             <thead>
               <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
                 <th class="text-left px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300">Variação</th>
@@ -943,6 +939,8 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
               <tr
                 v-for="v in filteredItemVariations"
                 :key="v.id"
+                :data-catalog-highlight="highlightedVariationId === v.id ? 'true' : undefined"
+                :class="{ 'catalog-variation-highlight': highlightedVariationId === v.id }"
                 class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors cursor-pointer"
                 @click="openVariationSheet(v)"
               >
@@ -950,7 +948,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
                 <td class="px-4 py-2.5">
                   <AppLink class="flex flex-wrap gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" :target="{ tab: 'catalogo', itemId: viewingItem.id, variationId: v.id }" @navigate="openVariationSheet(v)" @click.stop>
                     <span
-                      v-for="attr in sortedAttributeNames(viewingItem.attributes)"
+                      v-for="attr in orderedAttributeNames(viewingItem)"
                       :key="attr"
                       class="ds-attribute-tag inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs"
                       :title="attr"
@@ -1414,7 +1412,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
         <div v-if="variationFormItem?.attributes?.length" class="mb-4">
           <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Atributos</label>
           <div class="grid grid-cols-2 gap-3">
-            <div v-for="attr in sortedAttributeNames(variationFormItem.attributes)" :key="attr">
+            <div v-for="attr in orderedAttributeNames(variationFormItem)" :key="attr">
               <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ attr }}</label>
               <input
                 v-model="varForm.values[attr]"
@@ -1603,6 +1601,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
 .catalog-toolbar .ds-query-bar { flex: 1 1 280px; min-width: 0; margin-bottom: 0; }
 .catalog-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .catalog-actions > * { flex-shrink: 0; white-space: nowrap; }
+.ds-table tbody tr.catalog-variation-highlight, .ds-table tbody tr.catalog-variation-highlight:hover { background: var(--ds-active-bg); box-shadow: inset 3px 0 var(--ds-brand); }
 @media (max-width: 640px) {
   .catalog-toolbar .ds-query-bar { flex-basis: 100%; }
 }

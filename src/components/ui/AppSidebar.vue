@@ -1,243 +1,107 @@
 <script setup>
-import { reactive } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { matchesSearchTokens, searchTokens } from '../../utils/globalSearch.js'
 
-defineProps({
+const props = defineProps({
   groups: { type: Array, required: true },
   activeGroup: { type: String, default: null },
+  activeCategory: { type: String, default: null },
+  activeSubcategory: { type: String, default: null },
   facets: { type: Array, default: () => [] },
   hasActiveFilters: { type: Boolean, default: false },
   search: { type: String, default: '' },
   showSearch: { type: Boolean, default: true },
 })
-
-defineEmits(['close', 'select-group', 'toggle-filter', 'clear-filters', 'update:search', 'search-submit'])
-
-// Sections start collapsed — track which ones the user has expanded
-const expandedSections = reactive({})
-
-function toggleSection(key) {
-  expandedSections[key] = !expandedSections[key]
+const emit = defineEmits(['select-group', 'select-category', 'select-subcategory', 'toggle-filter', 'clear-filters', 'update:search', 'search-submit'])
+const filterSearch = ref('')
+const expandedSection = ref(null)
+const tokens = computed(() => searchTokens(filterSearch.value))
+const visibleGroups = computed(() => props.groups.filter(group => matchesSearchTokens(group, tokens.value)))
+const visibleFacets = computed(() => props.facets.flatMap(facet => {
+  if (!tokens.value.length || matchesSearchTokens(facet.label, tokens.value)) return [facet]
+  const options = facet.options.filter(option => matchesSearchTokens(option.value, tokens.value))
+  return options.length ? [{ ...facet, options }] : []
+}))
+watch(() => [props.activeGroup, props.activeCategory, props.activeSubcategory], () => { filterSearch.value = ''; expandedSection.value = null })
+const isHierarchy = facet => ['category', 'subcategory'].includes(facet.key)
+const isExpanded = facet => !!filterSearch.value.trim() || expandedSection.value === facet.key
+function toggleSection(facet) { expandedSection.value = expandedSection.value === facet.key ? null : facet.key }
+function clearFilters() {
+  filterSearch.value = ''
+  expandedSection.value = null
+  emit('clear-filters')
 }
 </script>
 
 <template>
-  <aside
-    class="catalog-sidebar ds-filter-rail fixed top-0 left-0 h-full z-40 w-60 border-r border-gray-200 dark:border-gray-700 shadow-lg flex flex-col"
-  >
-    <!-- Header -->
-    <div class="border-b border-gray-200 dark:border-gray-700">
-      <div class="flex items-center justify-between p-3">
-        <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Categorias e filtros</span>
-        <button
-          data-mobile-sidebar-close
-          class="inline-flex min-h-10 min-w-10 items-center justify-center rounded text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
-          type="button"
-          title="Fechar painel"
-          aria-label="Fechar categorias e filtros"
-          @click="$emit('close')"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+  <aside class="catalog-sidebar catalog-filter-panel fixed top-0 left-0 h-full z-40 w-60 flex flex-col">
+    <header class="catalog-filter-header">
+      <h2>Filtrar materiais</h2>
+      <button v-if="hasActiveFilters" type="button" class="catalog-filter-clear" @click="clearFilters">Limpar</button>
+    </header>
+
+    <div class="catalog-filter-context">
+      <button v-if="activeGroup" type="button" class="catalog-filter-all" @click="activeSubcategory ? emit('select-subcategory', null) : activeCategory ? emit('select-category', null) : emit('select-group', null)">
+        <span aria-hidden="true">←</span> {{ activeSubcategory ? activeCategory : activeCategory ? activeGroup : 'Todos os grupos' }}
+      </button>
+      <template v-if="activeGroup">
+        <h3 class="catalog-filter-group">{{ activeSubcategory || activeCategory || activeGroup }}</h3>
+      </template>
+      <input v-model="filterSearch" class="ds-input catalog-filter-search" type="search" :aria-label="activeGroup ? 'Buscar filtro ou opção' : 'Buscar grupo'" :placeholder="activeGroup ? 'Buscar categoria, atributo…' : 'Buscar grupo…'" />
+      <input v-if="showSearch" :value="search" type="search" class="ds-input catalog-filter-search" aria-label="Buscar materiais no catálogo" placeholder="Buscar material…" @input="emit('update:search', $event.target.value)" @keydown.enter="emit('search-submit')" />
     </div>
 
-    <!-- ===== NAVIGATION MODE (no group selected) ===== -->
-    <template v-if="!activeGroup">
-      <button
-        class="ds-filter-rail-active w-full truncate border-b border-gray-200 px-3 py-2 text-left text-sm font-medium transition-colors dark:border-gray-700 cursor-pointer"
-        @click="$emit('select-group', null)"
-      >
-        Todos os Grupos
+    <nav v-if="!activeGroup" class="catalog-filter-scroll catalog-filter-groups" aria-label="Grupos de materiais">
+      <button v-for="group in visibleGroups" :key="group" type="button" class="catalog-filter-row" @click="emit('select-group', group)">
+        <span>{{ group }}</span><span aria-hidden="true" class="catalog-filter-chevron">›</span>
       </button>
-
-      <!-- Search -->
-      <div v-if="showSearch" class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
-        <div class="relative">
-          <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-          </svg>
-          <input
-            :value="search"
-            type="text"
-            placeholder="Buscar..."
-            class="ds-filter-rail-input sidebar-search-input w-full rounded-lg border py-1.5 pl-8 pr-7 text-xs transition-colors focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
-            @input="$emit('update:search', $event.target.value)"
-            @keydown.enter="$emit('search-submit')"
-          />
-          <button
-            v-if="search"
-            class="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
-            @click="$emit('update:search', '')"
-          >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-      </div>
-
-      <nav class="flex-1 overflow-y-auto py-2">
-        <button
-          v-for="group in groups"
-          :key="group"
-          class="w-full text-left px-3 py-2 text-sm font-semibold transition-colors truncate text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-          :title="group"
-          @click="$emit('select-group', group)"
-        >
-          {{ group }}
+      <p v-if="!visibleGroups.length" class="catalog-filter-empty">Nenhum grupo encontrado.</p>
+    </nav>
+    <div v-else class="catalog-filter-scroll">
+      <section v-for="facet in visibleFacets" :key="facet.key" class="catalog-filter-section">
+        <button type="button" class="catalog-filter-section-title" :aria-expanded="isExpanded(facet)" :aria-controls="`catalog-facet-${facet.key}`" @click="toggleSection(facet)">
+          <span>{{ facet.label }} <small v-if="facet.selected.length">{{ facet.selected.length }}</small></span>
+          <span aria-hidden="true">{{ isExpanded(facet) ? '−' : '+' }}</span>
         </button>
-      </nav>
-    </template>
-
-    <!-- ===== EXPANDED: FILTER MODE (group selected) ===== -->
-    <template v-else>
-      <!-- Back button -->
-      <button
-        class="w-full text-left px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700 flex items-center gap-1.5 cursor-pointer"
-        @click="$emit('select-group', null)"
-      >
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-        </svg>
-        Todos os Grupos
-      </button>
-
-      <!-- Group name -->
-      <div class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
-        <h3 class="text-sm font-bold text-primary-700 dark:text-primary-400 truncate">{{ activeGroup }}</h3>
-      </div>
-
-      <!-- Search -->
-      <div v-if="showSearch" class="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700">
-        <div class="relative">
-          <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-          </svg>
-          <input
-            :value="search"
-            type="text"
-            placeholder="Buscar item, atributo..."
-            class="ds-filter-rail-input sidebar-search-input w-full rounded-lg border py-1.5 pl-8 pr-7 text-xs transition-colors focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
-            @input="$emit('update:search', $event.target.value)"
-            @keydown.enter="$emit('search-submit')"
-          />
-          <button
-            v-if="search"
-            class="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
-            @click="$emit('update:search', '')"
-          >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- Clear filters -->
-      <button
-        v-if="hasActiveFilters"
-        class="w-full text-left px-3 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-b border-gray-200 dark:border-gray-700 flex items-center gap-1 cursor-pointer"
-        @click="$emit('clear-filters')"
-      >
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-        Limpar filtros
-      </button>
-
-      <!-- Facet sections -->
-      <div class="flex-1 overflow-y-auto sidebar-scroll">
-        <div v-for="facet in facets" :key="facet.key" class="border-b border-gray-100 dark:border-gray-700/50">
-          <!-- Section header -->
-          <button
-            type="button"
-            class="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
-            :class="!expandedSections[facet.key]
-              ? 'text-gray-400 dark:text-gray-500 hover:text-gray-500 dark:hover:text-gray-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
-            :aria-expanded="Boolean(expandedSections[facet.key])"
-            :aria-controls="`catalog-facet-${facet.key}`"
-            @click="toggleSection(facet.key)"
-          >
-            <span>{{ facet.label }}</span>
-            <svg
-              class="w-3.5 h-3.5 transition-transform duration-200"
-              :class="{ '-rotate-90': !expandedSections[facet.key] }"
-              fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-            </svg>
-          </button>
-
-          <!-- Checkbox options -->
-          <div
-            :id="`catalog-facet-${facet.key}`"
-            class="ds-collapse"
-            :class="{ 'ds-collapse-open': expandedSections[facet.key] }"
-          >
-            <div class="px-3 pb-2.5 space-y-0.5">
-            <label
-              v-for="opt in facet.options"
-              :key="opt.value"
-              class="flex items-center gap-2.5 py-1 px-1 rounded cursor-pointer group hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
-            >
-              <!-- Custom checkbox -->
-              <span
-                class="relative flex items-center justify-center w-4 h-4 rounded border-[1.5px] transition-all flex-shrink-0"
-                :class="facet.selected.includes(opt.value)
-                  ? 'bg-primary-600 dark:bg-primary-500 border-primary-600 dark:border-primary-500'
-                  : 'border-gray-300 dark:border-gray-500 group-hover:border-gray-400 dark:group-hover:border-gray-400'"
-              >
-                <svg
-                  v-if="facet.selected.includes(opt.value)"
-                  class="w-2.5 h-2.5 text-white"
-                  fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"
-                >
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-              </span>
-              <input
-                type="checkbox"
-                class="sr-only"
-                :checked="facet.selected.includes(opt.value)"
-                @change="$emit('toggle-filter', facet.key, opt.value)"
-              />
-              <span class="text-[13px] text-gray-700 dark:text-gray-300 truncate flex-1 group-hover:text-gray-900 dark:group-hover:text-gray-100 leading-tight">
-                {{ opt.value }}
-              </span>
-              <span class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">
-                ({{ opt.count }})
-              </span>
-            </label>
-            </div>
+        <div :id="`catalog-facet-${facet.key}`" class="ds-collapse" :class="{ 'ds-collapse-open': isExpanded(facet) }">
+          <div class="catalog-filter-options">
+            <template v-for="option in facet.options" :key="option.value">
+              <button v-if="isHierarchy(facet)" type="button" class="catalog-filter-row" @click="emit('toggle-filter', facet.key, option.value)">
+                <span>{{ option.value }}</span><span aria-hidden="true" class="catalog-filter-chevron">›</span>
+              </button>
+              <label v-else class="catalog-filter-option">
+                <input type="checkbox" class="ds-table-checkbox" :checked="facet.selected.includes(option.value)" @change="emit('toggle-filter', facet.key, option.value)" />
+                <span>{{ option.value }}</span>
+              </label>
+            </template>
           </div>
         </div>
-
-        <!-- No facets -->
-        <p v-if="facets.length === 0" class="px-3 py-4 text-sm text-gray-400 dark:text-gray-500 italic text-center">
-          Nenhum filtro disponível.
-        </p>
-      </div>
-    </template>
+      </section>
+      <p v-if="!visibleFacets.length" class="catalog-filter-empty">{{ filterSearch.trim() ? 'Nenhum filtro encontrado.' : 'Nenhum filtro disponível neste nível.' }}</p>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-/* Thin elegant scrollbar */
-.sidebar-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--ds-text-subtle) 45%, transparent) transparent;
-}
-.sidebar-scroll::-webkit-scrollbar {
-  width: 5px;
-}
-.sidebar-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.sidebar-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--ds-text-subtle) 45%, transparent);
-  border-radius: 9999px;
-}
-.sidebar-scroll::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--ds-text-subtle) 65%, transparent);
-}
-
+.catalog-filter-panel { background: var(--ds-panel); color: var(--ds-text); border: 1px solid var(--ds-border); }
+.catalog-filter-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 8px 16px; border-bottom: 1px solid var(--ds-border-subtle); flex-shrink: 0; }
+.catalog-filter-header h2 { font-size: 14px; font-weight: 650; }
+.catalog-filter-clear { margin-left: auto; color: var(--ds-danger); font-size: 12px; cursor: pointer; }
+.catalog-filter-context { display: grid; gap: 12px; padding: 12px; flex-shrink: 0; }
+.catalog-filter-all { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 10px; border-radius: 6px; font-size: 13px; text-align: left; color: var(--ds-text-soft); cursor: pointer; }
+.catalog-filter-group { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.catalog-filter-search { min-width: 0; min-height: 38px; font-size: 13px; }
+.catalog-filter-scroll { min-height: 0; overflow-y: auto; flex: 1 1 auto; scrollbar-width: thin; scrollbar-color: var(--ds-border) transparent; }
+.catalog-filter-groups { padding: 0 6px 8px; }
+.catalog-filter-row, .catalog-filter-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 10px; border-radius: 6px; font-size: 13px; text-align: left; cursor: pointer; }
+.catalog-filter-row > span:first-child, .catalog-filter-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.catalog-filter-chevron { color: var(--ds-text-muted); font-size: 19px; }
+.catalog-filter-row:hover, .catalog-filter-option:hover, .catalog-filter-all:hover { background: var(--ds-surface-hover); }
+.catalog-filter-section { border-top: 1px solid var(--ds-border-subtle); }
+.catalog-filter-section-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 12px 16px; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.catalog-filter-section-title small { margin-left: 6px; color: var(--ds-active-text); }
+.catalog-filter-panel .catalog-filter-options { max-height: 260px; overflow-y: auto; padding: 0 6px 8px; }
+.catalog-filter-option input { flex-shrink: 0; }
+.catalog-filter-empty { padding: 20px 12px; color: var(--ds-text-muted); text-align: center; font-size: 13px; }
+.catalog-filter-panel button:focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: -2px; }
 </style>

@@ -14,7 +14,7 @@ const rows = computed(() => {
     return props.tags
       .map(tag => ({ key: tag.key, value: tag.value }))
       .filter(tag => tag.key && String(tag.value ?? '').trim())
-      .sort((a, b) => compareAttributeNames(a.key, b.key))
+      .sort((a, b) => compareAttributeNames(a.key, b.key, props.item?.attributeOrder))
   }
 
   return variationAttributeRows(props.item, props.variation)

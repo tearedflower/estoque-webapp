@@ -6,18 +6,30 @@
   --font-display: Inter, "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-  /* Acento âmbar (escala consumida pelas utilitárias primary-*). */
+  /* Acento laranja (escala consumida pelas utilitárias primary-*). */
   --color-primary-50: #fffbeb;
   --color-primary-100: #fef3c7;
   --color-primary-200: #fde68a;
   --color-primary-300: #fcd34d;
   --color-primary-400: #fbbf24;
-  --color-primary-500: #b45309;
-  --color-primary-600: #9a4a0a;
-  --color-primary-700: #854007;
-  --color-primary-800: #713007;
-  --color-primary-900: #78350f;
-  --color-primary-950: #451a03;
+  --color-primary-500: #d24400;
+  --color-primary-600: #c83c00;
+  --color-primary-700: #bd3500;
+  --color-primary-800: #a82e00;
+  --color-primary-900: #882600;
+  --color-primary-950: #521700;
+  --color-amber-500: #d24400;
+  --color-amber-600: #c83c00;
+  --color-amber-700: #bd3500;
+  --color-amber-800: #a82e00;
+  --color-amber-900: #882600;
+  --color-amber-950: #521700;
+  --color-yellow-500: #d24400;
+  --color-yellow-600: #c83c00;
+  --color-yellow-700: #bd3500;
+  --color-yellow-800: #a82e00;
+  --color-yellow-900: #882600;
+  --color-yellow-950: #521700;
 
   /* Superfícies — neutros frios, com painéis claros e campos discretos. */
   --ds-bg: #f3f5f8;
@@ -37,7 +49,7 @@
   --ds-nav-text-subtle: #9aa8ba;
   --ds-nav-info: #93c5fd;
   --ds-nav-surface: rgba(255, 255, 255, 0.07);
-  --ds-nav-active-bg: #8a410b;
+  --ds-nav-active-bg: #d24400;
   --ds-nav-active-text: #ffffff;
   --ds-header-bg: transparent;
   --ds-table-head: #f0f3f7;
@@ -57,8 +69,8 @@
   --ds-control-border: #b8c3d1;
 
   /* Ação e significado. */
-  --ds-brand: #b45309;
-  --ds-brand-hover: #92400e;
+  --ds-brand: #d24400;
+  --ds-brand-hover: #c83c00;
   --ds-primary-text: #ffffff;
   --ds-active-bg: #fff0db;
   --ds-active-text: #854007;
@@ -73,7 +85,7 @@
   --ds-success-solid: #146c43;
   --ds-success-hover: #105735;
   --ds-info-solid: #1d4ed8;
-  --ds-warning-solid: #c2410c;
+  --ds-warning-solid: #d24400;
   --ds-on-danger: #ffffff;
   --ds-overlay: rgba(15, 23, 42, 0.42);
   --ds-tag-bg: #eaf0f6;
@@ -107,6 +119,9 @@
   /* Tailwind legado: mantém as cores antigas ligadas à paleta central. */
   --color-white: #ffffff;
 
+  --ds-active-text: #a82e00;
+  --ds-warning: #bd3500;
+
   /* Seleção em âmbar suave; ações usam o tom sólido. */
   --color-primary-50: #fff5e6;
   --color-primary-100: #ffebcc;
@@ -117,24 +132,12 @@
   --color-amber-200: #fbd7a4;
   --color-amber-300: #f0b66b;
   --color-amber-400: #cf862f;
-  --color-amber-500: #a86616;
-  --color-amber-600: #8a4b08;
-  --color-amber-700: #723a08;
-  --color-amber-800: #5e300b;
-  --color-amber-900: #4c280c;
-  --color-amber-950: #321705;
 
   --color-yellow-50: #fff8ed;
   --color-yellow-100: #ffedcf;
   --color-yellow-200: #fbd7a4;
   --color-yellow-300: #f0b66b;
   --color-yellow-400: #cf862f;
-  --color-yellow-500: #a86616;
-  --color-yellow-600: #8a4b08;
-  --color-yellow-700: #723a08;
-  --color-yellow-800: #5e300b;
-  --color-yellow-900: #4c280c;
-  --color-yellow-950: #321705;
 
   --color-green-50: #e2f4e8;
   --color-green-100: #c6e9d1;
@@ -193,8 +196,6 @@
   --ds-control-bg: #151b24;
   --ds-control-border: #526175;
 
-  --ds-brand: #b45309;
-  --ds-brand-hover: #92400e;
   --ds-primary-text: #ffffff;
   --ds-active-bg: #3b2c1c;
   --ds-active-text: #ffd7a3;

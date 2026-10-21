@@ -1,5 +1,5 @@
 export const routeTabs = ['dashboard', 'relatorios', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin']
-const routeKeys = ['section', 'subTab', 'search', 'status', 'itemId', 'variationId', 'orderId', 'group', 'category', 'subcategory']
+const routeKeys = ['section', 'subTab', 'search', 'status', 'itemId', 'variationId', 'highlightVariationId', 'orderId', 'group', 'category', 'subcategory']
 
 export function routeHref(target) {
   const route = typeof target === 'string' ? { tab: target } : target

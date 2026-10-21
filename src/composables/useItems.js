@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import * as api from '../services/api.js'
+import { orderedAttributeNames } from '../utils/attributes.js'
 
 /**
  * Returns the stock alert status for a single variation.
@@ -200,9 +201,9 @@ export function useItems() {
       api.getVariations(),
       api.getDisplayOrder()
     ])
-    if (itemsRes.status === 'fulfilled') items.value = sortItems(itemsRes.value)
-    if (varsRes.status === 'fulfilled') variations.value = sortVariations(varsRes.value)
     if (orderRes.status === 'fulfilled') orderData.value = orderRes.value || {}
+    if (itemsRes.status === 'fulfilled') items.value = sortItems(itemsRes.value.map(item => ({ ...item, attributeOrder: orderData.value.itemAttributes?.[item.id] || [] })))
+    if (varsRes.status === 'fulfilled') variations.value = sortVariations(varsRes.value)
     const failed = [itemsRes, varsRes, orderRes].filter(result => result.status === 'rejected')
     if (failed.length) throw new AggregateError(failed.map(result => result.reason), 'Falha ao carregar materiais')
   }
@@ -676,8 +677,13 @@ export function useItems() {
   async function reorderItemAttributes(itemId, from, to) {
     const item = items.value.find(i => i.id === itemId)
     if (!item) return
-    item.attributes = _splice(item.attributes, from, to)
-    await api.updateItem(itemId, { ...item })
+    const attributes = orderedAttributeNames(item)
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= attributes.length || to >= attributes.length || from === to) return
+    const attributeOrder = _splice(attributes, from, to)
+    const nextOrder = { ...orderData.value, itemAttributes: { ...orderData.value.itemAttributes, [itemId]: attributeOrder } }
+    await api.saveDisplayOrder(nextOrder)
+    orderData.value = nextOrder
+    item.attributeOrder = attributeOrder
   }
 
   // ===== Reset =====

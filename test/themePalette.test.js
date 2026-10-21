@@ -5,10 +5,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const css = readFileSync(new URL('../public/themes/industrial.css', import.meta.url), 'utf8')
-const [lightCss, darkCss] = css.split(':root.dark {')
 const tokens = source => Object.fromEntries([...source.matchAll(/(--[\w-]+):\s*(#[\da-f]{6})\s*;/gi)].map(([, key, value]) => [key, value]))
-const light = tokens(lightCss)
-const dark = { ...light, ...tokens(darkCss) }
+const base = tokens(css.match(/:root \{([\s\S]*?)\}/)[1])
+const light = { ...base, ...tokens(css.match(/:root:not\(\.dark\) \{([\s\S]*?)\}/)[1]) }
+const dark = { ...base, ...tokens(css.match(/:root\.dark \{([\s\S]*?)\}/)[1]) }
 function luminance(hex) {
   return hex.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
     .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)

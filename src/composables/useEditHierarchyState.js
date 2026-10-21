@@ -20,6 +20,14 @@ const {
 } = useItems()
 
 const { success, error } = useToast()
+const reorderingAttributes = ref(false)
+async function moveAttribute(itemId, from, to) {
+  if (reorderingAttributes.value) return
+  reorderingAttributes.value = true
+  try { await reorderItemAttributes(itemId, from, to) }
+  catch (cause) { error(cause?.message || 'Não foi possível salvar a ordem dos atributos.') }
+  finally { reorderingAttributes.value = false }
+}
 
 // Returns unique extra-field keys used across all variations of an item
 function getItemExtraKeys(itemId) {
@@ -1057,7 +1065,7 @@ function onDrop(type, to, e) {
   if (type === 'group') reorderGroups(from, to)
   else if (type === 'category') reorderCategories(selectedGroup.value, from, to)
   else if (type === 'subcategory') reorderSubcategories(selectedGroup.value, selectedCategory.value, from, to)
-  else if (type.startsWith('attr:')) reorderItemAttributes(type.slice(5), from, to)
+  else if (type.startsWith('attr:')) moveAttribute(type.slice(5), from, to)
   onDragEnd()
 }
 
@@ -1089,6 +1097,8 @@ async function organizeSubcategoriesAlphabetically() {
 
   return {
     units,
+    moveAttribute,
+    reorderingAttributes,
     uniqueGroups,
     getCategoriesForGroup,
     getSubcategoriesForCategory,

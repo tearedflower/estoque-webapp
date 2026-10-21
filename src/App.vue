@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
-import AppSidebar from './components/ui/AppSidebar.vue'
 import RailFooter from './components/ui/RailFooter.vue'
 import AppNavigation from './components/ui/AppNavigation.vue'
 import ToastContainer from './components/ui/ToastContainer.vue'
@@ -43,7 +42,7 @@ const EpisTab = defineAsyncComponent(() => import('./components/cadastros/EpisTa
 
 const { isDark, toggleTheme, visualStyleName, cycleStyle } = useTheme()
 const canChangeVisualStyle = canUseLocalVisualStyles()
-const { items, variations, uniqueGroups, activeGroup, activeCategory, activeSubcategory, setActiveGroup, facets, hasActiveFilters, toggleFilter, clearFilters, loadData: loadItems } = useItems()
+const { items, variations, activeGroup, activeCategory, activeSubcategory, loadData: loadItems } = useItems()
 const { loadData: loadMovements } = useMovements()
 const { loadData: loadLocations } = useLocations()
 const { destinations, getDestFullName, loadData: loadDestinations } = useDestinations()
@@ -100,9 +99,6 @@ const savedActiveTab = ['dashboard', 'relatorios', 'catalogo', 'inventario', 'mo
   ? savedUiState.activeTab
   : 'dashboard'
 const showLoginModal = ref(false)
-const mobileSidebarOpen = ref(false)
-const mobileSidebarTrigger = ref(null)
-const catalogSidebarDismissed = ref(true)
 const catalogSearch = ref(savedUiState.catalogSearch || '')
 const catalogRef = ref(null)
 const activeTab = ref(savedActiveTab)
@@ -113,13 +109,13 @@ const requestedInventorySearch = ref(savedUiState.inventorySearch || '')
 const requestedOrdersTab = ref(savedUiState.ordersTab || 'ordens')
 const requestedOrderFocusId = ref('')
 const workOrderPreview = ref(null)
-const movBrowsing = ref(true)
 const movSubTab = ref(savedUiState.movSubTab || 'entrada')
 const requestedMovSubTab = ref(savedUiState.movSubTab || 'entrada')
 const requestedMovSearch = ref(null)
 const requestedMovementPrefill = ref(null)
 const requestedItemId = ref('')
 const requestedVariationId = ref('')
+const requestedHighlightVariationId = ref('')
 let routeReady = false
 let applyingRoute = false
 const movRef = ref(null)
@@ -145,14 +141,6 @@ watch(mustChangePassword, required => {
   if (required) passwordModalOpen.value = true
 }, { immediate: true })
 
-const catalogSidebarAvailable = computed(() =>
-  activeTab.value === 'catalogo'
-)
-const showCatalogSidebar = computed(() => catalogSidebarAvailable.value && !catalogSidebarDismissed.value)
-const anySidebar = computed(() => showCatalogSidebar.value)
-const catalogSidebarDocked = computed(() => showCatalogSidebar.value)
-const sidebarDocked = computed(() => catalogSidebarDocked.value)
-const sidebarOverlayOpen = computed(() => anySidebar.value && mobileSidebarOpen.value && !sidebarDocked.value)
 const navigationGroups = [
   { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }, { id: 'relatorios', label: 'Relatórios' }] },
   {
@@ -396,52 +384,8 @@ watch(activeTab, async value => {
 
 watch(activeTab, value => {
   loadTabData()
-  if (value === 'catalogo' || value === 'movimentacoes') catalogSidebarDismissed.value = true
   saveUiState({ activeTab: value })
 })
-
-watch(movBrowsing, browsing => {
-  if (activeTab.value === 'movimentacoes' && browsing) catalogSidebarDismissed.value = true
-})
-
-// Fecha painéis antigos ao trocar de contexto; a abertura é sempre manual.
-watch([anySidebar, catalogSidebarDocked], ([available, docked]) => {
-  if (!available || docked) mobileSidebarOpen.value = false
-}, { immediate: true })
-
-function openMobileSidebar() {
-  mobileSidebarOpen.value = true
-  nextTick(() => document.querySelector('[data-mobile-sidebar-close]')?.focus())
-}
-
-function closeMobileSidebar(restoreFocus = true) {
-  mobileSidebarOpen.value = false
-  if (restoreFocus) {
-    nextTick(() => (mobileSidebarTrigger.value?.$el || mobileSidebarTrigger.value)?.focus?.())
-  }
-}
-
-function closeCatalogSidebar() {
-  if (catalogSidebarDocked.value) {
-    catalogSidebarDismissed.value = true
-    return
-  }
-  closeMobileSidebar()
-}
-
-function toggleSidebar() {
-  if (catalogSidebarAvailable.value) {
-    catalogSidebarDismissed.value = !catalogSidebarDismissed.value
-    return
-  }
-  mobileSidebarOpen.value ? closeMobileSidebar() : openMobileSidebar()
-}
-
-function selectSidebarGroup(group) {
-  requestedItemId.value = ''
-  requestedVariationId.value = ''
-  setActiveGroup(group)
-}
 
 watch(catalogSearch, value => saveUiState({ catalogSearch: value }))
 watch(activeGroup, value => saveUiState({ catalogGroup: value || '' }))
@@ -560,10 +504,6 @@ function closeTopPopup() {
     closePasswordModal()
     return true
   }
-  if (mobileSidebarOpen.value) {
-    closeMobileSidebar()
-    return true
-  }
   if (showLoginModal.value) {
     showLoginModal.value = false
     return true
@@ -672,6 +612,7 @@ function navigateTab(target) {
   }
   requestedItemId.value = options.itemId || ''
   requestedVariationId.value = options.variationId || ''
+  requestedHighlightVariationId.value = options.highlightVariationId || ''
   if (tab === 'catalogo' && options.clearSearch) catalogSearch.value = ''
   if ((tab === 'fechamentos' || options.section === 'fechamentos') && !isLoggedIn.value) {
     showLoginModal.value = true
@@ -756,7 +697,7 @@ function navigateTab(target) {
 const currentRoute = computed(() => {
   const route = { tab: activeTab.value }
   if (route.tab === 'relatorios') route.subTab = requestedReportsTab.value
-  if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value })
+  if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value, highlightVariationId: requestedHighlightVariationId.value })
   if (route.tab === 'inventario') Object.assign(route, { section: requestedInventorySection.value, status: requestedInventoryStatus.value, search: requestedInventorySearch.value, variationId: requestedVariationId.value })
   if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '' })
   if (route.tab === 'cadastros') route.subTab = requestedCadastrosTab.value
@@ -835,41 +776,9 @@ function handleGlobalShortcutKeydown(event) {
 </script>
 
 <template>
-  <div class="ds-page" :class="{ 'has-docked-sidebar': sidebarDocked }">
-    <!-- Catalog Sidebar -->
-    <Teleport to="#workspace-filters" defer>
-    <AppSidebar
-      v-if="showCatalogSidebar"
-      id="mobile-side-panel"
-      :class="{ 'mobile-sidebar-open': mobileSidebarOpen, 'catalog-sidebar-docked': catalogSidebarDocked }"
-      :role="sidebarOverlayOpen ? 'dialog' : undefined"
-      :aria-modal="sidebarOverlayOpen ? 'true' : undefined"
-      aria-label="Categorias e filtros"
-      :groups="uniqueGroups"
-      :active-group="activeGroup"
-      :facets="facets"
-      :has-active-filters="hasActiveFilters"
-      :search="catalogSearch"
-      :show-search="activeTab !== 'catalogo'"
-      @close="closeCatalogSidebar"
-      @select-group="selectSidebarGroup"
-      @toggle-filter="(k, v) => toggleFilter(k, v)"
-      @clear-filters="clearFilters"
-      @update:search="v => catalogSearch = v"
-      @search-submit="catalogRef?.triggerSearchDrill?.()"
-    />
-
-    </Teleport>
-    <button
-      v-if="sidebarOverlayOpen"
-      type="button"
-      class="mobile-sidebar-backdrop"
-      aria-label="Fechar painel lateral"
-      @click="closeMobileSidebar()"
-    ></button>
-
+  <div class="ds-page">
     <!-- Main content -->
-    <div class="ds-app-main" :inert="sidebarOverlayOpen ? '' : undefined">
+    <div class="ds-app-main">
       <header class="ds-topbar">
         <AppLink target="dashboard" class="ds-nav-brand" title="Ir para o início" @navigate="navigateTab">
           <img :src="localBrandFavicon" :alt="localBrandName" class="h-7 w-7 rounded-md object-contain" @error="$event.currentTarget.style.display = 'none'" />
@@ -925,8 +834,7 @@ function handleGlobalShortcutKeydown(event) {
           </AppButton>
         </div>
 
-        <div class="ds-workspace-layout" :class="{ 'ds-workspace-filtered': sidebarDocked }">
-        <div id="workspace-filters" v-show="sidebarDocked"></div>
+        <div class="ds-workspace-layout">
         <div class="min-w-0">
         <KeepAlive>
           <DashboardView v-if="activeTab === 'dashboard'" @go="navigateTab" />
@@ -940,10 +848,9 @@ function handleGlobalShortcutKeydown(event) {
           :search="catalogSearch"
           :initial-item-id="requestedItemId"
           :initial-variation-id="requestedVariationId"
-          :filters-open="sidebarDocked || mobileSidebarOpen"
-          @update:record="record => { requestedItemId = record.itemId || ''; requestedVariationId = record.variationId || '' }"
+          :initial-highlight-variation-id="requestedHighlightVariationId"
+          @update:record="record => { requestedItemId = record.itemId || ''; requestedVariationId = record.variationId || ''; requestedHighlightVariationId = record.highlightVariationId || '' }"
           @update:search="v => catalogSearch = v"
-          @toggle-sidebar="toggleSidebar"
           @quick-movement="openContextQuickMovement"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
         />
@@ -984,7 +891,6 @@ function handleGlobalShortcutKeydown(event) {
           :initial-sub-tab="requestedMovSubTab"
           :initial-history-search="requestedMovSearch"
           :prefill-movement="requestedMovementPrefill"
-          @update:browsing="v => movBrowsing = v"
           @update:sub-tab="v => { movSubTab = v; requestedMovSubTab = v }"
           @movement-complete="handleMovementComplete"
           @navigate="navigateTab"

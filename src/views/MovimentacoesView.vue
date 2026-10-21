@@ -18,7 +18,7 @@ import PersonPicker from '../components/ui/PersonPicker.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import AppButton from '../components/ui/AppButton.vue'
 import AttributeBadges from '../components/ui/AttributeBadges.vue'
-import { sortedAttributeNames, variationAttributeRows } from '../utils/attributes.js'
+import { sortedAttributeNames, orderedAttributeNames, variationAttributeRows } from '../utils/attributes.js'
 import AppLink from '../components/ui/AppLink.vue'
 import AppDialog from '../components/ui/AppDialog.vue'
 import AppModal from '../components/ui/AppModal.vue'
@@ -26,6 +26,7 @@ import SectionTabs from '../components/ui/SectionTabs.vue'
 import { normalizeSearchText as normalizeText } from '../utils/globalSearch.js'
 import { formatRecentDateTime } from '../utils/recentDateTime.js'
 import { buildMovementRows, filterMovementRows } from '../utils/movementPicker.js'
+import { movementHistoryCsv } from '../utils/movementHistoryCsv.js'
 
 const isAdmin = inject('isAdmin')
 const canOperate = inject('canOperate')
@@ -1203,6 +1204,17 @@ const {
   historyPageSizeOptions,
   historyTotalPages,
 } = useMovementHistory(movements)
+function exportHistoryCsv() {
+  if (!filteredMovements.value.length) return
+  const url = URL.createObjectURL(new Blob([movementHistoryCsv(filteredMovements.value)], { type: 'text/csv;charset=utf-8;' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `historico_movimentacoes_${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 const selectedHistoryFilters = computed(() => histFacets.value.flatMap(facet =>
   facet.selected.map(value => ({ key: facet.key, label: facet.label, value }))))
 const orderedHistoryFacets = computed(() => [...histFacets.value].sort((a, b) =>
@@ -1646,7 +1658,7 @@ defineExpose({
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
-                  <th v-for="attr in sortedAttributeNames(selectedItem?.attributes)" :key="attr" class="text-left px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300">{{ attr }}</th>
+                  <th v-for="attr in orderedAttributeNames(selectedItem)" :key="attr" class="text-left px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300">{{ attr }}</th>
                   <th class="text-center px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300 w-20">Qtd.</th>
                   <th class="text-center px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300 w-20">Mín.</th>
                   <th class="text-left px-4 py-2.5 font-semibold text-gray-600 dark:text-gray-300">Local</th>
@@ -1664,7 +1676,7 @@ defineExpose({
                     : 'hover:bg-primary-50 dark:hover:bg-primary-900/20 cursor-pointer'"
                   @click="!(activeSubTab === 'saida' && v.stockConfirmed !== false && v.stock <= 0) && selectVariation(v)"
                 >
-                  <td v-for="attr in sortedAttributeNames(selectedItem?.attributes)" :key="attr" class="px-4 py-2.5 text-gray-700 dark:text-gray-300">{{ v.values?.[attr] || '—' }}</td>
+                  <td v-for="attr in orderedAttributeNames(selectedItem)" :key="attr" class="px-4 py-2.5 text-gray-700 dark:text-gray-300">{{ v.values?.[attr] || '—' }}</td>
                   <td
                     class="px-4 py-2.5 text-center tabular-nums font-medium"
                     :class="v.stock <= 0 ? 'text-red-500 dark:text-red-400' : (v.minStock > 0 && v.stock <= v.minStock) ? 'text-amber-500 dark:text-amber-400' : 'text-gray-800 dark:text-gray-100'"
@@ -2262,7 +2274,7 @@ defineExpose({
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ line.itemName }}</p>
                   <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ [line.itemGroup, line.itemCategory, line.itemSubcategory].filter(Boolean).join(' > ') }}</p>
-                  <AttributeBadges class="mt-2" :variation="{ values: line.variationValues, extras: line.variationExtras }" compact />
+                  <AttributeBadges class="mt-2" :item="items.find(item => item.id === line.itemId)" :variation="{ values: line.variationValues, extras: line.variationExtras }" compact />
                   <p class="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
                     {{ [line.supplier, line.unitCost !== null ? `Custo: R$ ${Number(line.unitCost).toFixed(2)}` : '', line.docRef].filter(Boolean).join(' · ') || 'Sem fornecedor/custo/doc.' }}
                   </p>
@@ -2481,7 +2493,7 @@ defineExpose({
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ line.itemName }}</p>
                   <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ [line.itemGroup, line.itemCategory, line.itemSubcategory].filter(Boolean).join(' > ') }}</p>
-                  <AttributeBadges class="mt-2" :variation="{ values: line.variationValues, extras: line.variationExtras }" compact />
+                  <AttributeBadges class="mt-2" :item="items.find(item => item.id === line.itemId)" :variation="{ values: line.variationValues, extras: line.variationExtras }" compact />
                   <p class="mt-1 text-[11px] text-gray-400 dark:text-gray-500">{{ line.requestedBy }} · {{ line.destination }}</p>
                 </div>
                 <div class="flex-shrink-0 text-right">
@@ -2523,10 +2535,9 @@ defineExpose({
         <input v-model="histSearch" class="ds-query-input" type="search" aria-label="Buscar no histórico" placeholder="Buscar material, pessoa, destino ou documento…" />
         <AppButton v-if="hasHistFilters" variant="secondary" @click="clearHistFilters">Limpar filtros</AppButton>
       </div>
-      <div class="movement-history-tools">
-        <label><span class="movement-label">De</span><input v-model="histDateFrom" type="date" aria-label="Data inicial" /></label>
-        <label><span class="movement-label">Até</span><input v-model="histDateTo" type="date" aria-label="Data final" /></label>
-      </div>
+      <label class="movement-history-date"><span class="movement-label">De</span><input v-model="histDateFrom" type="date" aria-label="Data inicial" /></label>
+      <label class="movement-history-date"><span class="movement-label">Até</span><input v-model="histDateTo" type="date" aria-label="Data final" /></label>
+      <AppButton class="movement-history-export" variant="secondary" :disabled="!filteredMovements.length" title="Exportar todos os resultados da busca e dos filtros, incluindo outras páginas" @click="exportHistoryCsv">Exportar CSV</AppButton>
       </div>
       <div class="movement-history-filters" aria-label="Filtros do histórico">
           <div v-for="(facet, index) in primaryHistoryFacets" :key="facet.key" class="movement-facet">
@@ -2649,7 +2660,7 @@ defineExpose({
                       <AppLink v-if="m.variationId" :target="{ tab: 'inventario', section: 'estoque', variationId: m.variationId }" class="block font-medium text-gray-800 dark:text-gray-100 text-xs leading-snug truncate hover:underline" @navigate="target => emit('navigate', target)">{{ m.itemName }}</AppLink>
                       <p v-else class="font-medium text-gray-800 dark:text-gray-100 text-xs leading-snug truncate">{{ m.itemName }}</p>
                       <p class="text-[10px] text-gray-400 dark:text-gray-500 truncate mb-1">{{ [m.itemGroup, m.itemCategory, m.itemSubcategory].filter(Boolean).join(' › ') }}</p>
-                      <AttributeBadges :variation="{ values: m.variationValues, extras: m.variationExtras }" compact />
+                      <AttributeBadges :item="items.find(item => item.id === m.itemId)" :variation="{ values: m.variationValues, extras: m.variationExtras }" compact />
                     </td>
 
                     <!-- Qty -->
@@ -3079,12 +3090,13 @@ defineExpose({
 }
 .movement-pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--ds-border); font-size: 12px; }
 .movement-pagination > :first-child { margin-right: auto; }
-.movement-history-tools > label { flex: 0 1 180px; }
-.movement-history-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
-.movement-history-toolbar .ds-query-bar { flex: 1 1 320px; margin: 0; }
+.movement-history-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 170px 170px auto; align-items: end; gap: 12px; }
+.movement-history-toolbar .ds-query-bar { min-width: 0; margin: 0; }
+.movement-history-toolbar .ds-query-input { min-height: 44px; }
 .movement-history-toolbar .ds-query-bar > button { flex-shrink: 0; white-space: nowrap; }
-.movement-history-toolbar .movement-history-tools { flex-wrap: nowrap; }
-.movement-history-toolbar .movement-history-tools > label { width: 150px; }
+.movement-history-date { min-width: 0; }
+.movement-history-date input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid var(--ds-border); border-radius: 6px; background: var(--ds-surface); color: var(--ds-text); font-size: 14px; }
+.movement-history-export { min-height: 44px; white-space: nowrap; }
 .history-more-panel { width: min(560px, 100%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; gap: 16px; padding: 20px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-surface); color: var(--ds-text); }
 .history-more-panel h2 { font-size: 18px; font-weight: 600; }
 .history-more-panel header { margin: 0; }
@@ -3115,6 +3127,11 @@ defineExpose({
 .movement-facet-options small { color: var(--ds-text-subtle); }
 .movement-filter-tags { display: flex; gap: 8px; flex-wrap: wrap; }
 .movement-filter-tags button { background: var(--ds-active-bg); color: var(--ds-active-text); border: 1px solid var(--ds-border); border-radius: 6px; padding: 6px 10px; min-height: 36px; font-size: 12px; cursor: pointer; }
+@media (max-width: 900px) {
+  .movement-history-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .movement-history-toolbar .ds-query-bar, .movement-history-export { grid-column: 1 / -1; }
+  .movement-history-export { justify-self: end; }
+}
 @media (max-width: 767px) {
   .movement-search-fields { gap: 12px; }
   .movement-search-fields > .movement-search, .movement-search-fields > .movement-filter-row { flex-basis: 100%; }
@@ -3129,8 +3146,6 @@ defineExpose({
 }
 @media (max-width: 640px) {
   .movement-search-fields .movement-filter-row > label { flex-basis: 100%; }
-  .movement-history-tools > label { flex: 1 1 120px; }
-  .movement-history-toolbar .movement-history-tools { width: 100%; }
   .movement-workspace .ds-query-bar { flex-wrap: wrap; }
 }
 </style>
