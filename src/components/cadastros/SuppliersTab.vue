@@ -7,6 +7,7 @@ const { suppliers, addSupplier, editSupplier, toggleSupplierActive, deleteSuppli
 const { success, error } = useToast()
 
 const search = ref('')
+const statusFilter = ref('')
 const adding = ref(false)
 const newName = ref('')
 const newDescription = ref('')
@@ -17,11 +18,8 @@ const supplierSaving = ref(false)
 
 const filteredSuppliers = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return suppliers.value
-  return suppliers.value.filter(s =>
-    s.name.toLowerCase().includes(q) ||
-    String(s.description || '').toLowerCase().includes(q)
-  )
+  return suppliers.value.filter(s => (!statusFilter.value || (statusFilter.value === 'active') === Boolean(s.active)) &&
+    (!q || s.name.toLowerCase().includes(q) || String(s.description || '').toLowerCase().includes(q)))
 })
 
 const canAddSupplier = computed(() => newName.value.trim().length > 0 && !supplierSaving.value)
@@ -106,14 +104,18 @@ async function onDelete(supplier) {
 </script>
 
 <template>
-  <div class="w-full">
+  <div class="registry-page w-full">
+    <header class="registry-heading"><div><h2 class="text-lg font-semibold">Fornecedores</h2><p class="ds-muted text-sm mt-1">Gerencie os fornecedores e as observações usadas nas entradas de materiais.</p></div></header>
     <div class="ds-toolbar mb-4 justify-between">
       <input
         v-model="search"
         type="search"
         placeholder="Buscar fornecedor..."
+        aria-label="Buscar fornecedores"
         class="ds-input sm:max-w-sm"
       />
+      <select v-model="statusFilter" class="ds-input registry-status-filter" aria-label="Filtrar fornecedores por status"><option value="">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select>
+      <span class="registry-count ds-muted">{{ filteredSuppliers.length }} {{ filteredSuppliers.length === 1 ? 'fornecedor' : 'fornecedores' }}</span>
       <button
         v-if="!adding"
         type="button"
@@ -156,21 +158,13 @@ async function onDelete(supplier) {
     </div>
 
     <div class="ds-table-wrap overflow-x-auto">
-      <table v-if="filteredSuppliers.length" class="ds-table min-w-[40rem]">
-        <thead>
-          <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
-            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Nome</th>
-            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Observação</th>
-            <th class="w-24 px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</th>
-            <th class="w-28 px-4 py-2.5"></th>
-          </tr>
-        </thead>
+      <table v-if="filteredSuppliers.length" class="ds-table registry-table">
+        <thead><tr><th scope="col">Fornecedor</th><th scope="col">Observação</th><th scope="col">Status</th><th scope="col">Ações</th></tr></thead>
         <tbody>
           <tr
             v-for="supplier in filteredSuppliers"
             :key="supplier.id"
             class="border-b border-gray-100 transition-colors hover:bg-gray-50 dark:border-gray-700/50 dark:hover:bg-gray-700/30"
-            :class="{ 'opacity-60': !supplier.active }"
           >
             <template v-if="editingId === supplier.id">
               <td class="px-4 py-2">
@@ -191,19 +185,20 @@ async function onDelete(supplier) {
               </td>
             </template>
             <template v-else>
-              <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{{ supplier.name }}</td>
-              <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ supplier.description || '-' }}</td>
-              <td class="px-4 py-3 text-center">
+              <td data-label="Fornecedor" class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{{ supplier.name }}</td>
+              <td data-label="Observação" class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ supplier.description || '-' }}</td>
+              <td data-label="Status" class="px-4 py-3 text-center">
                 <button
                   type="button"
                   class="rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors"
                   :class="supplier.active
                     ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'
                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'"
+                  :aria-label="`${supplier.active ? 'Desativar' : 'Ativar'} fornecedor ${supplier.name}`"
                   @click="onToggle(supplier)"
                 >{{ supplier.active ? 'Ativo' : 'Inativo' }}</button>
               </td>
-              <td class="px-4 py-3">
+              <td data-label="Ações" class="px-4 py-3">
                 <div class="flex items-center justify-center gap-1">
                   <button type="button" class="p-1 text-gray-400 transition-colors hover:text-amber-500" title="Editar" @click="startEdit(supplier)">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
@@ -218,7 +213,7 @@ async function onDelete(supplier) {
         </tbody>
       </table>
       <div v-else class="px-6 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
-        Nenhum fornecedor cadastrado.
+        {{ search || statusFilter ? 'Nenhum fornecedor encontrado com esses filtros.' : 'Nenhum fornecedor cadastrado.' }}
       </div>
     </div>
   </div>

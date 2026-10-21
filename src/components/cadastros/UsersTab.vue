@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useAuth } from '../../composables/useAuth.js'
 import { useUsers } from '../../composables/useUsers.js'
 import { useToast } from '../../composables/useToast.js'
@@ -8,6 +8,13 @@ const { users, addUser, editUser, toggleUserActive, removeUser } = useUsers()
 const { user, isAdmin } = useAuth()
 const { success, error } = useToast()
 
+const search = ref('')
+const statusFilter = ref('')
+const filteredUsers = computed(() => {
+  const q = search.value.trim().toLocaleLowerCase('pt-BR')
+  return users.value.filter(u => (!statusFilter.value || (statusFilter.value === 'active') === Boolean(u.active)) &&
+    (!q || [u.name, u.username, u.role === 'admin' ? 'Administrador' : u.role === 'operador' ? 'Operador' : 'Visitante'].join(' ').toLocaleLowerCase('pt-BR').includes(q)))
+})
 const newUserName = ref('')
 const newUserUsername = ref('')
 const newUserPin = ref('')
@@ -83,9 +90,13 @@ async function onDeleteUser(u) {
 </script>
 <template>
 <!-- ===== Operadores ===== -->
-  <div>
+  <div class="registry-page">
     <div class="w-full">
-      <div class="ds-toolbar mb-4 justify-start">
+      <header class="registry-heading"><div><h2 class="text-lg font-semibold">Operadores</h2><p class="ds-muted text-sm mt-1">Gerencie os acessos, perfis e a situação dos operadores do sistema.</p></div></header>
+    <div class="ds-toolbar mb-4">
+        <input v-model="search" type="search" class="ds-input sm:max-w-sm" aria-label="Buscar operadores" placeholder="Buscar nome, login ou perfil..." />
+        <select v-model="statusFilter" class="ds-input registry-status-filter" aria-label="Filtrar operadores por status"><option value="">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select>
+        <span class="registry-count ds-muted">{{ filteredUsers.length }} {{ filteredUsers.length === 1 ? 'operador' : 'operadores' }}</span>
         <button
           v-if="isAdmin && !addingUser"
           class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-[var(--ds-primary-text)] rounded-lg transition-colors"
@@ -139,22 +150,13 @@ async function onDeleteUser(u) {
 
       <!-- Users table -->
       <div class="ds-table-wrap overflow-x-auto">
-        <table v-if="users.length" class="ds-table min-w-[680px]">
-          <thead>
-            <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-              <th class="text-left px-3 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Nome</th>
-              <th class="text-left px-3 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Login</th>
-              <th class="text-left px-3 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Papel</th>
-              <th class="text-center px-3 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-24">Status</th>
-              <th class="px-3 py-2.5 w-16"></th>
-            </tr>
-          </thead>
+        <table v-if="filteredUsers.length" class="ds-table registry-table">
+          <thead><tr><th scope="col">Nome</th><th scope="col">Login</th><th scope="col">Perfil</th><th scope="col">Status</th><th scope="col">Ações</th></tr></thead>
           <tbody>
             <tr
-              v-for="u in users"
+              v-for="u in filteredUsers"
               :key="u.id"
               class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
-              :class="{ 'opacity-50': !u.active }"
             >
               <!-- Editing row -->
               <template v-if="editingUserId === u.id">
@@ -191,9 +193,9 @@ async function onDeleteUser(u) {
               </template>
               <!-- Display row -->
               <template v-else>
-                <td class="px-3 py-2.5 font-medium text-gray-800 dark:text-gray-100">{{ u.name }}</td>
-                <td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{{ u.username || u.name }}</td>
-                <td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">
+                <td data-label="Nome" class="px-3 py-2.5 font-medium text-gray-800 dark:text-gray-100">{{ u.name }}</td>
+                <td data-label="Login" class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{{ u.username || u.name }}</td>
+                <td data-label="Perfil" class="px-3 py-2.5 text-gray-500 dark:text-gray-400">
                   <span
                     class="px-2 py-0.5 rounded-full text-[11px] font-medium"
                     :class="{
@@ -201,20 +203,20 @@ async function onDeleteUser(u) {
                       'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400': u.role === 'operador',
                       'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400': u.role === 'visitante'
                     }"
-                  >{{ u.role === 'admin' ? 'Admin' : u.role === 'operador' ? 'Operador' : 'Visitante' }}</span>
+                  >{{ u.role === 'admin' ? 'Administrador' : u.role === 'operador' ? 'Operador' : 'Visitante' }}</span>
                 </td>
-                <td class="px-3 py-2.5 text-center">
+                <td data-label="Status" class="px-3 py-2.5 text-center">
                   <button
                     v-if="u.id !== 'user_admin'"
                     class="px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors"
                     :class="u.active
                       ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
                       : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'"
-                    @click="onToggleUserActive(u)"
+                    :aria-label="`${u.active ? 'Desativar' : 'Ativar'} operador ${u.name}`" @click="onToggleUserActive(u)"
                   >{{ u.active ? 'Ativo' : 'Inativo' }}</button>
                   <span v-else class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">Ativo</span>
                 </td>
-                <td class="px-3 py-2.5">
+                <td data-label="Ações" class="px-3 py-2.5">
                   <div class="flex items-center justify-center gap-0.5">
                     <button class="p-1 text-gray-400 hover:text-amber-500 dark:hover:text-amber-400 transition-colors" title="Editar" @click="startEditUser(u)">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
@@ -234,7 +236,7 @@ async function onDeleteUser(u) {
           <svg class="w-10 h-10 mx-auto mb-2 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
           </svg>
-          <p class="text-sm">Nenhum operador cadastrado.</p>
+          <p class="text-sm">{{ search || statusFilter ? 'Nenhum operador encontrado com esses filtros.' : 'Nenhum operador cadastrado.' }}</p>
           <p class="text-xs mt-1">Clique em <strong>Novo operador</strong> para adicionar.</p>
         </div>
       </div>

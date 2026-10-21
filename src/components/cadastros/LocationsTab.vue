@@ -6,6 +6,10 @@ import { useToast } from '../../composables/useToast.js'
 const { addLocal, editLocal, toggleLocalActive, deleteLocal, topLevelLocais, getChildren } = useLocations()
 const { success, error } = useToast()
 
+const search = ref('')
+const matchesSearch = local => [local.name, local.description].join(' ').toLocaleLowerCase('pt-BR').includes(search.value.trim().toLocaleLowerCase('pt-BR'))
+const visibleParents = computed(() => topLevelLocais.value.filter(parent => matchesSearch(parent) || getChildren(parent.id).some(matchesSearch)))
+const visibleChildren = parent => matchesSearch(parent) ? getChildren(parent.id) : getChildren(parent.id).filter(matchesSearch)
 const collapsedLocais = reactive(new Set())
 function toggleCollapseLocal(id) { collapsedLocais.has(id) ? collapsedLocais.delete(id) : collapsedLocais.add(id) }
 
@@ -82,9 +86,12 @@ async function onDeleteLocal(l) {
 </script>
 <template>
 <!-- ===== Locais ===== -->
-  <div>
+  <div class="registry-page">
     <div class="w-full">
-      <div class="ds-toolbar mb-4 justify-start">
+      <header class="registry-heading"><div><h2 class="text-lg font-semibold">Locais</h2><p class="ds-muted text-sm mt-1">Organize os locais de armazenamento e seus sublocais.</p></div></header>
+    <div class="ds-toolbar mb-4">
+        <input v-model="search" type="search" class="ds-input sm:max-w-sm" aria-label="Buscar locais" placeholder="Buscar local, sublocal ou descrição..." />
+        <span class="registry-count ds-muted">{{ visibleParents.length }} {{ visibleParents.length === 1 ? 'local principal' : 'locais principais' }}</span>
         <button
           v-if="!addingLocal"
           class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-[var(--ds-primary-text)] rounded-lg transition-colors"
@@ -141,13 +148,13 @@ async function onDeleteLocal(l) {
       </div>
 
       <!-- Locais hierarchical list -->
-      <div class="ds-list-panel">
-        <template v-if="topLevelLocais.length">
-          <div v-for="parent in topLevelLocais" :key="parent.id">
+      <div class="ds-list-panel registry-locations">
+        <div class="registry-locations-header"><span>Local e descrição</span><span>Status</span><span>Ações</span></div>
+        <template v-if="visibleParents.length">
+          <div v-for="parent in visibleParents" :key="parent.id">
             <!-- Parent row -->
             <div
-              class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
-              :class="{ 'opacity-50': !parent.active }"
+              class="registry-location-row flex items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
             >
               <template v-if="editingLocalId === parent.id">
                 <input v-model="editLocalName" class="flex-1 px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none" @keydown.enter="confirmEditLocal" @keydown.escape="cancelEditLocal" autofocus />
@@ -165,7 +172,7 @@ async function onDeleteLocal(l) {
                   v-if="getChildren(parent.id).length"
                   class="p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-transform"
                   :class="{ '-rotate-90': collapsedLocais.has(parent.id) }"
-                  @click="toggleCollapseLocal(parent.id)"
+                  :aria-expanded="Boolean(search) || !collapsedLocais.has(parent.id)" :aria-label="`${collapsedLocais.has(parent.id) && !search ? 'Expandir' : 'Recolher'} ${parent.name}`" @click="toggleCollapseLocal(parent.id)"
                 >
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
                 </button>
@@ -176,11 +183,11 @@ async function onDeleteLocal(l) {
                 </svg>
                 <div class="flex-1 min-w-0">
                   <span class="font-medium text-sm text-gray-800 dark:text-gray-100">{{ parent.name }}</span>
-                  <span v-if="parent.description" class="ml-2 text-xs text-gray-400 dark:text-gray-500">{{ parent.description }}</span>
+                  <span v-if="parent.description" class="registry-location-description block text-xs ds-muted mt-1">{{ parent.description }}</span>
                   <span class="ml-2 text-[10px] text-gray-400 dark:text-gray-500">{{ getChildren(parent.id).length ? `(${getChildren(parent.id).length} sub)` : '' }}</span>
                 </div>
                 <button
-                  class="px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex-shrink-0"
+                  class="registry-location-status px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex-shrink-0"
                   :class="parent.active
                     ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'"
@@ -199,12 +206,11 @@ async function onDeleteLocal(l) {
             </div>
 
             <!-- Children rows (collapsible, indented) -->
-            <template v-if="!collapsedLocais.has(parent.id)">
+            <template v-if="search || !collapsedLocais.has(parent.id)">
             <div
-              v-for="child in getChildren(parent.id)"
+              v-for="child in visibleChildren(parent)"
               :key="child.id"
-              class="flex items-center gap-2 pl-10 pr-4 py-2.5 border-b border-gray-50 dark:border-gray-700/30 bg-gray-50/50 dark:bg-gray-800/30 hover:bg-gray-100/60 dark:hover:bg-gray-700/20 transition-colors"
-              :class="{ 'opacity-50': !child.active }"
+              class="registry-location-row registry-location-child flex items-center gap-2 pl-10 pr-4 py-2.5 border-b border-gray-50 dark:border-gray-700/30 bg-gray-50/50 dark:bg-gray-800/30 hover:bg-gray-100/60 dark:hover:bg-gray-700/20 transition-colors"
             >
               <template v-if="editingLocalId === child.id">
                 <input v-model="editLocalName" class="flex-1 px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none" @keydown.enter="confirmEditLocal" @keydown.escape="cancelEditLocal" autofocus />
@@ -223,10 +229,10 @@ async function onDeleteLocal(l) {
                 </svg>
                 <div class="flex-1 min-w-0">
                   <span class="text-sm text-gray-700 dark:text-gray-200">{{ child.name }}</span>
-                  <span v-if="child.description" class="ml-2 text-xs text-gray-400 dark:text-gray-500">{{ child.description }}</span>
+                  <span v-if="child.description" class="registry-location-description block text-xs ds-muted mt-1">{{ child.description }}</span>
                 </div>
                 <button
-                  class="px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex-shrink-0"
+                  class="registry-location-status px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex-shrink-0"
                   :class="child.active
                     ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'"
@@ -249,7 +255,7 @@ async function onDeleteLocal(l) {
           <svg class="w-10 h-10 mx-auto mb-2 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
           </svg>
-          <p class="text-sm">Nenhum local cadastrado.</p>
+          <p class="text-sm">{{ search ? 'Nenhum local encontrado com essa busca.' : 'Nenhum local cadastrado.' }}</p>
           <p class="text-xs mt-1">Clique em <strong>Novo local</strong> para adicionar.</p>
         </div>
       </div>

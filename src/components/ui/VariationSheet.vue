@@ -365,9 +365,8 @@ async function saveEdit() {
   >
     <div class="flex min-h-full items-center justify-center p-4" @click.self="emit('close')">
     <section class="flex w-full max-w-5xl max-h-[88vh] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
-      <header class="flex shrink-0 items-start justify-between gap-3 border-b border-gray-200 p-4 dark:border-gray-700">
-        <div class="flex min-w-0 flex-1 items-start gap-3">
-          <div class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 ring-1 ring-inset ring-black/10 dark:bg-gray-800 dark:ring-white/10 sm:h-24 sm:w-24">
+      <header class="variation-sheet-header shrink-0 border-b border-gray-200 p-4 dark:border-gray-700">
+        <div class="variation-sheet-photo flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 ring-1 ring-inset ring-black/10 dark:bg-gray-800 dark:ring-white/10 sm:h-24 sm:w-24">
             <button
               v-if="!photoFailed"
               type="button"
@@ -399,26 +398,12 @@ async function saveEdit() {
               <span class="text-[10px] font-medium">Sem foto</span>
             </div>
           </div>
-          <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="hidden" @change="addVariationPhoto" />
-          <div class="min-w-0">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Ficha da variação</p>
-            <h2 class="mt-1 truncate text-xl font-semibold text-gray-900 dark:text-gray-100">{{ item.name }}</h2>
-            <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-              <p class="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">{{ hierarchy }}</p>
-              <button
-                v-if="showCatalogLink"
-                type="button"
-                class="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
-                title="Abrir esta variação no catálogo"
-                @click="emit('go-to-catalog')"
-              >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h4.086c.597 0 1.17.237 1.591.659l1.164 1.182a2.25 2.25 0 0 0 1.606.659H18A2.25 2.25 0 0 1 20.25 9.25v8A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25v-10.5Z" />
-                </svg>
-                Ver no catálogo
-              </button>
-            </div>
-            <div class="mt-3 flex flex-wrap gap-1.5">
+        <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="hidden" @change="addVariationPhoto" />
+        <div class="variation-sheet-heading min-w-0">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Ficha da variação</p>
+          <h2 class="mt-1 break-words text-xl font-semibold text-gray-900 dark:text-gray-100">{{ item.name }}</h2>
+          <p class="mt-2 break-words text-xs text-gray-500 dark:text-gray-400">{{ hierarchy }}</p>
+          <div class="mt-3 flex flex-wrap gap-1.5">
               <span
                 v-for="tag in variationTags"
                 :key="`${tag.key}:${tag.value}`"
@@ -429,11 +414,23 @@ async function saveEdit() {
               </span>
               <span v-if="!variationTags.length" class="text-xs text-gray-400 dark:text-gray-500">Sem atributos específicos.</span>
             </div>
-          </div>
         </div>
-        <button
+        <div class="variation-sheet-header-actions">
+          <button
+                v-if="showCatalogLink"
+                type="button"
+                class="variation-sheet-catalog-link inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+                title="Abrir esta variação no catálogo"
+                @click="emit('go-to-catalog')"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h4.086c.597 0 1.17.237 1.591.659l1.164 1.182a2.25 2.25 0 0 0 1.606.659H18A2.25 2.25 0 0 1 20.25 9.25v8A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25v-10.5Z" />
+                </svg>
+                Ver no catálogo
+              </button>
+          <button
           type="button"
-          class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+          class="variation-sheet-close inline-flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
           title="Fechar"
           @click="emit('close')"
         >
@@ -441,6 +438,7 @@ async function saveEdit() {
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
           </svg>
         </button>
+        </div>
       </header>
 
       <div class="min-h-0 flex-1 overflow-auto">
@@ -471,7 +469,7 @@ async function saveEdit() {
           </div>
         </section>
 
-        <section v-if="canManage" class="flex flex-wrap items-center gap-2 border-b border-gray-200 p-4 dark:border-gray-700">
+        <section v-if="canManage" class="variation-sheet-actions flex flex-wrap items-center gap-2 border-b border-gray-200 p-4 dark:border-gray-700">
           <button
             type="button"
             class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[var(--ds-success-solid)] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--ds-success-hover)]"
@@ -944,3 +942,21 @@ async function saveEdit() {
     </section>
   </AppDialog>
 </template>
+
+<style scoped>
+.variation-sheet-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 16px; }
+.variation-sheet-header-actions { display: flex; align-items: flex-start; gap: 8px; }
+.variation-sheet-catalog-link { justify-content: center; min-height: 44px; }
+.variation-sheet-close { flex-shrink: 0; }
+.variation-sheet-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 100px; min-height: 44px; padding: 10px 12px; line-height: 1.2; flex-shrink: 0; }
+@media (max-width: 640px) {
+  .variation-sheet-header { grid-template-columns: 72px minmax(0, 1fr) 44px; gap: 12px; }
+  .variation-sheet-photo { width: 72px; height: 72px; grid-column: 1; grid-row: 1; }
+  .variation-sheet-heading { grid-column: 2; grid-row: 1; }
+  .variation-sheet-header-actions { display: contents; }
+  .variation-sheet-catalog-link { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+  .variation-sheet-close { grid-column: 3; grid-row: 1; }
+  .variation-sheet-actions { gap: 8px; }
+  .variation-sheet-actions > button { flex: 1 1 0; min-width: 0; }
+}
+</style>
