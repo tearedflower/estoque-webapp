@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import crypto from 'crypto'
 import db from '../db.js'
-import { requireAdmin, requireAuth } from '../middleware/auth.js'
+import { requireAdmin, requireAuth, requireOperator } from '../middleware/auth.js'
 import { queuePeopleRoleSync } from '../peopleRoleSync.js'
 
 const router = Router()
@@ -31,7 +31,7 @@ function presentPerson(row) {
 }
 
 // GET /api/people
-router.get('/', (req, res) => {
+router.get('/', requireAuth, requireOperator, (req, res) => {
   const rows = db.prepare('SELECT * FROM people ORDER BY name').all()
   res.json(rows.map(presentPerson))
 })

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, inject, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, inject, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import EditHierarchyView from './EditHierarchyView.vue'
 import DestinationsTab from '../components/cadastros/DestinationsTab.vue'
 import LocationsTab from '../components/cadastros/LocationsTab.vue'
@@ -8,6 +8,7 @@ import SuppliersTab from '../components/cadastros/SuppliersTab.vue'
 import UsersTab from '../components/cadastros/UsersTab.vue'
 import CatalogPendingTab from '../components/cadastros/CatalogPendingTab.vue'
 import { backupCountdownLabel } from '../utils/backupStatus.js'
+const AuditTab = defineAsyncComponent(() => import('../components/cadastros/AuditTab.vue'))
 
 const isAdmin = inject('isAdmin')
 const props = defineProps({
@@ -16,7 +17,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['quick-movement', 'update:tab'])
 
-const validTabs = ['hierarquia', 'destinos', 'locais', 'fornecedores', 'pendencias', 'pessoas', 'cargos', 'operadores']
+const validTabs = ['hierarquia', 'destinos', 'locais', 'fornecedores', 'pendencias', 'pessoas', 'cargos', 'operadores', 'auditoria']
 const activeSubTab = ref(validTabs.includes(props.initialTab) ? props.initialTab : 'hierarquia')
 const now = ref(Date.now())
 let countdownTimer = null
@@ -40,7 +41,7 @@ const cadastroTabs = computed(() => [
   { id: 'fornecedores', label: 'Fornecedores' },
   { id: 'pendencias', label: 'Pendências' },
   { id: 'pessoas', label: 'Pessoas' },
-  ...(isAdmin.value ? [{ id: 'operadores', label: 'Operadores' }] : []),
+  ...(isAdmin.value ? [{ id: 'operadores', label: 'Operadores' }, { id: 'auditoria', label: 'Auditoria' }] : []),
 ])
 
 watch(() => props.initialTab, tab => {
@@ -52,7 +53,7 @@ watch(activeSubTab, tab => {
 })
 
 watch(isAdmin, admin => {
-  if (!admin && activeSubTab.value === 'operadores') activeSubTab.value = 'hierarquia'
+  if (!admin && ['operadores', 'auditoria'].includes(activeSubTab.value)) activeSubTab.value = 'hierarquia'
 }, { immediate: true })
 
 onMounted(() => {
@@ -94,6 +95,7 @@ onUnmounted(() => {
         v-for="tab in cadastroTabs"
         :key="tab.id"
         type="button"
+        :aria-current="activeSubTab === tab.id ? 'page' : undefined"
         class="ds-segmented-item"
         :class="activeSubTab === tab.id || (tab.id === 'pessoas' && activeSubTab === 'cargos') ? 'ds-segmented-item-active' : ''"
         @click="activeSubTab = tab.id"
@@ -123,4 +125,6 @@ onUnmounted(() => {
 
   <!-- ===== Operadores ===== -->
   <UsersTab v-else-if="activeSubTab === 'operadores'" />
+
+  <AuditTab v-else-if="activeSubTab === 'auditoria' && isAdmin" />
 </template>

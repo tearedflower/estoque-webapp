@@ -45,5 +45,5 @@ export function useAuth() {
     }
   }
 
-  return { user, isAdmin, isLoggedIn, canOperate, login, logout, checkSession, changeOwnPassword }
+  return { expireSession: () => { user.value = null }, user, isAdmin, isLoggedIn, canOperate, login, logout, checkSession, changeOwnPassword }
 }

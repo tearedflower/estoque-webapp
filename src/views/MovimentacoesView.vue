@@ -1237,6 +1237,7 @@ const {
   filteredDestinationSummaries,
   summaryTotals,
 } = useDestinationSummary({ destinations, movements, workOrders, getDestFullName })
+const deleteReason = ref('')
 const deletePendingId = ref(null)
 const deleteConfirmPending = ref(false)
 const deletePendingMovement = computed(() => movements.value.find(m => m.id === deletePendingId.value) || null)
@@ -1258,14 +1259,14 @@ const deleteLinkedOrderCount = computed(() => {
   return workOrders.value.filter(order => order.items?.some(item => item.movementId === movementId || item.movement_id === movementId)).length
 })
 
-function requestDelete(id) { deletePendingId.value = id }
+function requestDelete(id) { deleteReason.value = ''; deletePendingId.value = id }
 function cancelDelete() { deletePendingId.value = null }
 async function confirmDelete() {
   const id = deletePendingId.value
-  if (!id) return
+  if (!id || !deleteReason.value.trim()) return
   deleteConfirmPending.value = true
   try {
-    const result = await deleteMovement(id)
+    const result = await deleteMovement(id, deleteReason.value)
     if (result?.variationId) {
       const liveVar = variations.value.find(v => v.id === result.variationId)
       if (liveVar) liveVar.stock = result.newStock
@@ -1278,6 +1279,7 @@ async function confirmDelete() {
     }
     deletePendingId.value = null
     success('Movimentação excluída e estoque ajustado.')
+    if (result.refreshFailed) error('Exclusão salva. Recarregue a página para atualizar os demais saldos do histórico.')
   } catch (e) {
     error(e.message)
   } finally {
@@ -1318,6 +1320,8 @@ function startEditMovement(m) {
     destination: m.destination || '',
     docRef: m.docRef || '',
     note: m.note || '',
+    reason: '',
+    expectedRevision: m.revision ?? 0,
   }
 }
 
@@ -1398,6 +1402,7 @@ const editUnitCostInvalid = computed(() => {
 
 const editMovementBlockReason = computed(() => {
   if (!editingMovement.value) return ''
+  if (!editMovForm.value.reason?.trim()) return 'Informe o motivo da correção.'
   const qty = Number(editMovForm.value.qty)
   if (!Number.isFinite(qty) || qty <= 0) return 'Informe uma quantidade maior que zero.'
   if (editingMovement.value.type === 'entrada' && editUnitCostInvalid.value) return 'Informe um custo valido ou deixe vazio.'
@@ -1446,6 +1451,7 @@ async function saveEditMovement() {
     const result = await editMovement(editingMovement.value.id, changes, liveVar)
     if (!result.ok) { error(result.error); return }
     success('Movimentacao atualizada!')
+    if (result.refreshFailed) error('Correção salva. Recarregue a página para atualizar os demais saldos do histórico.')
     editingMovement.value = null
     editMovementDestinationId.value = ''
     editMovementDestinationOther.value = false
@@ -2772,7 +2778,7 @@ defineExpose({
   >
     <div v-if="deletePendingMovement" class="space-y-4">
       <p class="text-sm text-gray-600 dark:text-gray-300">
-        Esta movimentação será apagada definitivamente. O estoque será recalculado antes da exclusão.
+        A movimentação será removida do histórico operacional. O conteúdo original e o motivo serão preservados na auditoria.
       </p>
 
       <dl class="grid grid-cols-2 gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs dark:border-gray-700 dark:bg-gray-900/50">
@@ -2816,15 +2822,18 @@ defineExpose({
         A movimentação também será removida de {{ deleteLinkedOrderCount }} {{ deleteLinkedOrderCount === 1 ? 'ordem' : 'ordens' }} de serviço.
       </p>
 
+      <label class="block text-sm">Motivo da exclusão
+        <textarea v-model="deleteReason" class="ds-input mt-1" maxlength="2000" required></textarea>
+      </label>
       <div class="flex justify-end gap-2 pt-1">
         <AppButton variant="secondary" :disabled="deleteConfirmPending" @click="cancelDelete">Cancelar</AppButton>
         <AppButton
           variant="dangerSolid"
           :loading="deleteConfirmPending"
-          :disabled="deleteStockPreview?.after < 0"
+          :disabled="!deleteReason.trim() || deleteStockPreview?.after < 0"
           @click="confirmDelete"
         >
-          Excluir definitivamente
+          Excluir e registrar motivo
         </AppButton>
       </div>
     </div>
@@ -2977,6 +2986,9 @@ defineExpose({
           />
         </div>
 
+        <label class="mb-4 block text-sm">Motivo da correção
+          <textarea v-model="editMovForm.reason" class="ds-input mt-1" maxlength="2000" required></textarea>
+        </label>
         <!-- Ações -->
         <div class="flex justify-end gap-2 pt-3 border-t border-gray-200 dark:border-gray-700">
           <p v-if="editMovementBlockReason" class="mr-auto self-center text-xs text-amber-600 dark:text-amber-400">

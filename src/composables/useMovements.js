@@ -59,11 +59,12 @@ export function useMovements() {
     return created
   }
 
-  async function deleteMovement(id) {
-    const result = await api.deleteMovement(id)
+  async function deleteMovement(id, reason = '') {
+    const result = await api.deleteMovement(id, { reason })
     const idx = movements.value.findIndex(m => m.id === id)
     if (idx !== -1) movements.value.splice(idx, 1)
-    return result
+    const refreshFailed = await loadData().then(() => false, () => true)
+    return { ...result, refreshFailed }
   }
 
   /**
@@ -78,21 +79,21 @@ export function useMovements() {
     if (!isFinite(newQty) || newQty <= 0) return { ok: false, error: 'Quantidade deve ser positiva.' }
 
     try {
-      const updated = await api.updateMovement(id, changes)
+      const updated = await api.updateMovement(id, { ...changes, expectedRevision: changes.expectedRevision ?? m.revision ?? 0 })
       // Update local movement
       Object.assign(m, updated)
       // Update local variation stock if qty changed
       if (newQty !== oldQty && variation) {
-        const diff = newQty - oldQty
-        if (m.type === 'entrada') variation.stock += diff
-        else variation.stock -= diff
+        variation.stock = updated.currentStock
       }
       // Re-sort by date descending after date change
       if (changes.date !== undefined) {
         movements.value.sort((a, b) => new Date(b.date) - new Date(a.date))
       }
-      return { ok: true }
+      const refreshFailed = await loadData().then(() => false, () => true)
+      return { ok: true, refreshFailed }
     } catch (e) {
+      if (e.code === 'MOVEMENT_CHANGED') await loadData().catch(() => {})
       return { ok: false, error: e.message }
     }
   }

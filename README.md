@@ -165,6 +165,85 @@ BACKUP_MIRROR_DIR=
 
 `BACKUP_MIRROR_DIR` é opcional e permite copiar os backups verificados para outro diretório. A interface mostra o estado e a previsão do próximo backup.
 
+Os novos backups são um par: `estoque-....db` e a pasta irmã `estoque-....db.photos`.
+A pasta contém as fotos dos lotes referenciadas pelo banco e um manifesto com SHA-256;
+as fotos permanentes do catálogo já ficam dentro do SQLite. Copie e mantenha o par junto.
+O espelho inclui os dois, e a retenção local remove os dois. Uma imagem referenciada
+ausente impede que o backup seja considerado concluído.
+
+Com o servidor parado, `backup:restore` verifica as imagens antes de substituir os dados
+e restaura o par. A cópia de segurança do banco atual fica em `antes-restauracao-....db`;
+as imagens anteriores, quando presentes, ficam na pasta `.photos-original` ao lado dessa cópia.
+Backups antigos sem `.photos` continuam aceitos, mas restauram somente o banco e mantêm
+as imagens atuais; o comando informa essa limitação. Não remova pastas `.restore.old`
+ou `.restore.tmp` após uma interrupção sem conferir seu conteúdo.
+
+### Auditoria e concorrência
+
+A aba **Administração → Auditoria** centraliza os registros de movimentações para administradores.
+Ela oferece busca por material, operador, documento ou motivo, filtros por ação e período,
+paginação e detalhes dos valores anteriores e atuais. O histórico operacional mantém
+as ações de editar e excluir; a consulta da auditoria fica na Administração.
+O endereço direto é `/#/cadastros?subTab=auditoria`.
+Correções e exclusões guardam o conteúdo anterior, o novo conteúdo quando aplicável,
+o operador, o horário e o motivo. A remoção de materiais de OS também registra a
+movimentação removida. Correções de quantidade ou data e exclusões recalculam os saldos
+históricos restantes da variação na mesma transação.
+
+A auditoria começa na migração de esquema 9: ela não recupera alterações anteriores.
+O modelo continua permitindo correção e exclusão administrativa com auditoria; ainda
+não exige estorno como único método de correção. Importações e mudanças em cadastros
+têm suas regras próprias e ainda não estão integralmente cobertas pela nova auditoria.
+
+A API de edição aceita `expectedRevision`, obtida na consulta da movimentação.
+Uma revisão desatualizada retorna `409 MOVEMENT_CHANGED`. O formulário envia a revisão
+com que foi aberto para evitar sobrepor a edição de outra sessão.
+
+Entradas, saídas, lotes e inclusão de materiais em OS aceitam o cabeçalho
+`Idempotency-Key` (8 a 160 caracteres: letras, números, `_` e `-`). Pedidos repetidos
+do mesmo usuário, para a mesma rota e com o mesmo corpo retornam a resposta gravada,
+sem movimentar novamente. Reutilizar a chave com outro corpo retorna `409`.
+O cliente repete uma falha de rede uma vez, usando a mesma chave. Respostas de erro
+não são memorizadas. O campo `requestId` dos lotes continua compatível.
+
+### Carregamento e consulta do histórico
+
+As telas reaproveitam dados durante 30 segundos e compartilham pedidos simultâneos.
+Trocar de aba carrega os recursos daquela tela; alterações locais invalidam o cache,
+e voltar à janela verifica os recursos da tela atual. A carga inicial ainda alimenta
+a busca global e os relatórios.
+
+`GET /api/movements?page=1&pageSize=50` retorna `{ items, total, page, pageSize }`.
+`pageSize` permite de 1 a 200; os filtros opcionais são `variationId`, `type`, `from`
+e `to` (datas ISO, limites inclusivos). Sem paginação, a resposta continua sendo um array.
+Há índices por data e por variação/data. O histórico e os relatórios do frontend ainda
+usam a consulta completa: migrá-los para paginação e agregações remotas é uma etapa posterior.
+
+A nova aba de Auditoria já usa paginação no servidor:
+`GET /api/movements/audit?page=1&pageSize=25`. Ela aceita `q` (busca sem distinguir
+acentos ou maiúsculas), `action` (`update`, `delete` ou `recalculate`), `from`
+(instante inicial inclusivo) e `to` (instante final exclusivo). O formulário inclui
+o dia final inteiro no fuso local do navegador. `pageSize` permite de 1 a 100;
+a resposta contém `{ items, total, page, pageSize }`. Esse endpoint exige administrador.
+
+A lista de pessoas exige autenticação e papel de administrador ou operador.
+Trocar a própria senha encerra as outras sessões; redefinir a senha de outra conta
+ou desativá-la encerra as sessões daquela conta. A sessão atual continua após a troca
+da própria senha.
+
+### Testes no navegador
+
+```sh
+npx playwright install chromium
+npm run test:e2e
+```
+
+Os testes iniciam frontend e API próprios nas portas 5174 e 3101, com banco e imagens
+temporários. Não reutilizam o servidor nem o banco instalados. Cobrem navegação pública,
+cache entre telas, login, troca de senha inicial, correção concorrente e auditoria de
+correções/exclusões na Administração, filtros e navegação entre páginas. `npm test` também compila todos os componentes Vue em modo dev.
+O workflow de CI executa testes, build e testes no navegador em Node 24.
+
 ### Acesso pela rede
 
 O servidor aceita a própria origem e acessos locais. Se o frontend e a API usarem origens diferentes na rede, liste-as separadas por vírgula:

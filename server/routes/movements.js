@@ -9,6 +9,12 @@ import { findDuplicateItem, normalizeItemIdentity } from '../utils/catalogIdenti
 import { calculateStockAfter, hasEnoughStock, isAdminStockAdjustment, parsePositiveQty } from '../utils/stockMath.js'
 import { getDestinationFullName } from '../utils/destinations.js'
 
+import { idempotent } from '../middleware/idempotency.js'
+import { auditMovement, reconcileMovementBalances } from '../services/movementLedger.js'
+import { normalizeAuditSearch, queryMovementAudit } from '../services/auditQuery.js'
+
+db.function('audit_text', { deterministic: true }, normalizeAuditSearch)
+
 const router = Router()
 
 function movementField(line, fields, key) {
@@ -161,6 +167,7 @@ function toMovement(row) {
     : null
   return {
     id: row.id,
+    revision: row.revision || 0,
     type: row.type,
     variationId: row.variation_id,
     itemId: row.item_id,
@@ -190,12 +197,49 @@ function toMovement(row) {
 
 // GET /api/movements
 router.get('/', (req, res) => {
-  const rows = db.prepare('SELECT * FROM movements ORDER BY date DESC').all()
-  res.json(rows.map(toMovement))
+  const paginated = req.query.page !== undefined || req.query.pageSize !== undefined
+  const page = Number(req.query.page ?? 1)
+  const pageSize = Number(req.query.pageSize ?? 50)
+  if (paginated && (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200)) {
+    return res.status(400).json({ error: 'Página inválida. Use page >= 1 e pageSize entre 1 e 200.' })
+  }
+  const clauses = []
+  const params = []
+  for (const [query, column] of [['variationId', 'variation_id'], ['type', 'type'], ['from', 'date'], ['to', 'date']]) {
+    if (typeof req.query[query] === 'string' && req.query[query]) {
+      clauses.push(`${column} ${query === 'from' ? '>=' : query === 'to' ? '<=' : '='} ?`)
+      params.push(req.query[query])
+    }
+  }
+  const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''
+  const rows = db.prepare(`SELECT * FROM movements${where} ORDER BY date DESC, rowid DESC${paginated ? ' LIMIT ? OFFSET ?' : ''}`)
+    .all(...params, ...(paginated ? [pageSize, (page - 1) * pageSize] : []))
+  if (!paginated) return res.json(rows.map(toMovement))
+  const total = db.prepare(`SELECT count(*) AS total FROM movements${where}`).get(...params).total
+  res.json({ items: rows.map(toMovement), total, page, pageSize })
+})
+
+function presentAudit(row) {
+  return { id: row.sequence, movementId: row.movement_id, action: row.action, before: JSON.parse(row.before_json),
+    after: row.after_json ? JSON.parse(row.after_json) : null, reason: row.reason,
+    operatorId: row.operator_id, operatorName: row.operator_name, createdAt: row.created_at }
+}
+router.get('/audit', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const result = queryMovementAudit(db, req.query)
+    const items = result.rows.map(presentAudit)
+    res.json(result.paginated ? { items, total: result.total, page: result.page, pageSize: result.pageSize } : items)
+  } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message })
+    throw error
+  }
+})
+router.get('/:id/audit', requireAuth, requireAdmin, (req, res) => {
+  res.json(db.prepare('SELECT * FROM movement_audit WHERE movement_id=? ORDER BY sequence').all(req.params.id).map(presentAudit))
 })
 
 // POST /api/movements
-router.post('/', requireAuth, requireOperator, (req, res) => {
+router.post('/', requireAuth, requireOperator, idempotent(db, (req, res) => {
   const m = req.body
   const operatorId = req.user?.id || ''
   const operatorName = req.user?.name || ''
@@ -283,10 +327,10 @@ router.post('/', requireAuth, requireOperator, (req, res) => {
     stockConfirmed: true,
     adjustments: adjustmentIds.map(id => toMovement(db.prepare('SELECT * FROM movements WHERE id = ?').get(id)))
   })
-})
+}))
 
 // POST /api/movements/batch
-router.post('/batch', requireAuth, requireOperator, (req, res) => {
+router.post('/batch', requireAuth, requireOperator, idempotent(db, (req, res) => {
   const { type, items = [], fields = {}, requestId = '' } = req.body
   const operatorId = req.user?.id || ''
   const operatorName = req.user?.name || ''
@@ -483,7 +527,7 @@ router.post('/batch', requireAuth, requireOperator, (req, res) => {
 
   createBatch()
   res.json({ movements: created, initialMovements })
-})
+}))
 
 // GET /api/movements/import-mappings
 router.get('/import-mappings', requireAuth, requireAdmin, (req, res) => {
@@ -513,6 +557,9 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   if (db.prepare('SELECT 1 FROM stock_confirmations WHERE movement_id = ?').get(m.id)) return res.status(409).json({ error: 'A conferência inicial é um registro de auditoria. Registre um novo ajuste para corrigir o saldo.' })
 
   const changes = req.body
+  if (changes.expectedRevision !== undefined && changes.expectedRevision !== m.revision) {
+    return res.status(409).json({ error: 'Esta movimentação foi alterada. Atualize o histórico antes de editar.', code: 'MOVEMENT_CHANGED' })
+  }
   const oldQty = m.qty
   const newQty = changes.qty !== undefined ? parsePositiveQty(changes.qty) : oldQty
   if (!newQty) return res.status(400).json({ error: 'Quantidade deve ser positiva.' })
@@ -557,7 +604,7 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
     if (newStock !== null) {
       db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(newStock, m.variation_id)
     }
-    db.prepare(`UPDATE movements SET qty=?, stock_after=?, date=?, supplier=?, unit_cost=?, requested_by=?, requested_by_person_id=?, destination=?, doc_ref=?, note=? WHERE id=?`).run(
+    db.prepare(`UPDATE movements SET revision=revision+1, qty=?, stock_after=?, date=?, supplier=?, unit_cost=?, requested_by=?, requested_by_person_id=?, destination=?, doc_ref=?, note=? WHERE id=?`).run(
       newQty,
       stockAfter,
       changes.date !== undefined ? changes.date : m.date,
@@ -571,11 +618,13 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
       req.params.id
     )
     db.prepare('UPDATE work_order_items SET qty = ? WHERE movement_id = ?').run(newQty, req.params.id)
+    auditMovement(db, m, db.prepare('SELECT * FROM movements WHERE id=?').get(m.id), req.user, changes.reason)
+    if (newQty !== oldQty || changes.date !== undefined) reconcileMovementBalances(db, m.variation_id, req.user, changes.reason || 'Recalcular após correção')
   })
   updateMovement()
 
   const updated = db.prepare('SELECT * FROM movements WHERE id = ?').get(req.params.id)
-  res.json(toMovement(updated))
+  res.json({ ...toMovement(updated), currentStock: db.prepare('SELECT stock FROM variations WHERE id=?').get(m.variation_id)?.stock })
 })
 
 // DELETE /api/movements/:id
@@ -596,9 +645,11 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const removedWorkOrderItemIds = linkedItems.map(i => i.id)
 
   const removeMovement = db.transaction(() => {
+    auditMovement(db, m, null, req.user, req.body?.reason || 'Exclusão administrativa', 'delete')
     if (newStock !== null) db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(newStock, m.variation_id)
     db.prepare('DELETE FROM work_order_items WHERE movement_id = ?').run(req.params.id)
     db.prepare('DELETE FROM movements WHERE id = ?').run(req.params.id)
+    reconcileMovementBalances(db, m.variation_id, req.user, 'Recalcular após exclusão')
   })
   removeMovement()
 

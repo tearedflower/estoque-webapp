@@ -55,3 +55,7 @@ entrada_saida_produtos.xlsx
 # Notas de features futuras
 features.md
 
+
+# Browser test artifacts
+playwright-report/
+test-results/

@@ -20,7 +20,8 @@
     "windows:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/uninstallWindowsTask.ps1",
     "db:seed:dev": "node server/scripts/seedDatabase.js --env=.env.dev --mode=seed",
     "db:reset:dev": "node server/scripts/seedDatabase.js --env=.env.dev --mode=reset",
-    "db:reset:prod": "node server/scripts/seedDatabase.js --env=.env.prod --mode=reset"
+    "db:reset:prod": "node server/scripts/seedDatabase.js --env=.env.prod --mode=reset",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -31,6 +32,7 @@
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.2.1",
     "@vitejs/plugin-vue": "^5.2.3",
     "tailwindcss": "^4.2.1",

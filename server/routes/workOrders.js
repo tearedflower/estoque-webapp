@@ -8,6 +8,9 @@ import { workOrderCreationDateError } from '../../src/utils/workOrderForm.js'
 import { parsePositiveQty } from '../utils/stockMath.js'
 import { prepareStockConfirmations, applyStockConfirmations } from '../utils/stockConfirmation.js'
 
+import { idempotent } from '../middleware/idempotency.js'
+import { auditMovement, reconcileMovementBalances } from '../services/movementLedger.js'
+
 const router = Router()
 const INTERNAL_MAINTENANCE_LOCATION = 'Oficina'
 const MOTOR_OBJECTIVE_TYPES = new Set(['nenhum', 'rebobinado', 'reformado', 'revisado', 'enrolado', 'enrolar', 'instalado', 'removido', 'movimentado', 'inativado', 'reativado', 'observacao'])
@@ -855,7 +858,7 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const tx = db.transaction(() => {
     for (const item of workOrderItems) {
       if (!item.movement_id) continue
-      const movement = db.prepare('SELECT doc_ref, qty, type, affects_stock FROM movements WHERE id = ?').get(item.movement_id)
+      const movement = db.prepare('SELECT * FROM movements WHERE id = ?').get(item.movement_id)
       const isImplicit = movement?.type === 'saida' && movement.doc_ref === `OS #${o.number}`
       if (!isImplicit) continue
 
@@ -865,7 +868,9 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
         db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(newStock, item.variation_id)
         restoredStockByVariation.set(item.variation_id, newStock)
       }
+      auditMovement(db, movement, null, req.user, `Exclusão da OS #${o.number}`, 'delete')
       db.prepare('DELETE FROM movements WHERE id = ?').run(item.movement_id)
+      reconcileMovementBalances(db, item.variation_id, req.user, `Exclusão da OS #${o.number}`)
       removedMovementIds.push(item.movement_id)
     }
 
@@ -884,7 +889,7 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
 })
 
 // POST /api/work-orders/:id/items — add material to work order
-router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
+router.post('/:id/items', requireAuth, requireOperator, idempotent(db, (req, res) => {
   const o = db.prepare('SELECT * FROM work_orders WHERE id = ?').get(req.params.id)
   if (!o) return res.status(404).json({ error: 'Ordem de serviço não encontrada' })
 
@@ -975,14 +980,14 @@ router.post('/:id/items', requireAuth, requireOperator, (req, res) => {
     newStock: stockAfter,
     stockConfirmed: true
   })
-})
+}))
 
 // DELETE /api/work-orders/:id/items/:itemId — remove material, revert stock
 router.delete('/:id/items/:itemId', requireAuth, requireAdmin, (req, res) => {
   const woi = db.prepare('SELECT * FROM work_order_items WHERE id = ? AND work_order_id = ?').get(req.params.itemId, req.params.id)
   if (!woi) return res.status(404).json({ error: 'Item da OS não encontrado' })
   const order = db.prepare('SELECT number FROM work_orders WHERE id = ?').get(req.params.id)
-  const movement = woi.movement_id ? db.prepare('SELECT doc_ref, qty, type, affects_stock FROM movements WHERE id = ?').get(woi.movement_id) : null
+  const movement = woi.movement_id ? db.prepare('SELECT * FROM movements WHERE id = ?').get(woi.movement_id) : null
   const isImplicit = movement?.type === 'saida' && movement.doc_ref === `OS #${order?.number}`
 
   const tx = db.transaction(() => {
@@ -995,7 +1000,9 @@ router.delete('/:id/items/:itemId', requireAuth, requireAdmin, (req, res) => {
       if (variation && movement.affects_stock !== 0) {
         db.prepare('UPDATE variations SET stock = ? WHERE id = ?').run(variation.stock + movement.qty, woi.variation_id)
       }
+      auditMovement(db, movement, null, req.user, `Remoção de material da OS #${order.number}`, 'delete')
       db.prepare('DELETE FROM movements WHERE id = ?').run(woi.movement_id)
+      reconcileMovementBalances(db, woi.variation_id, req.user, `Remoção de material da OS #${order.number}`)
     }
 
     // Remove the work order item

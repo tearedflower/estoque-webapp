@@ -18,6 +18,9 @@ import { formatPartialOrderDate, workOrderCreationDateError } from '../utils/wor
 import { workOrderMaintenanceKindLabel, workOrderMaintenanceSearchParts } from '../utils/workOrderSearch.js'
 import { normalizeSearchText as normalizeText, searchTokens as textTokens } from '../utils/globalSearch.js'
 
+import { formatDate, formatDateOnly, formatTimeOnly, formatDateTimeParts, maintenancePeriod, maintenanceEndLabel, maintenanceObservation, motorOrderTitle, maintenanceLocationLabel, maintenanceLocationTypeLabel, orderDisplayTitle, variationLabel, hierarchyLabel } from '../utils/workOrderPresentation.js'
+import { serializeCsv } from '../utils/csv.js'
+
 const props = defineProps({
   mode: { type: String, default: 'general' },
   embedded: { type: Boolean, default: false },
@@ -1578,10 +1581,6 @@ function clearHistoryFilters() {
   historyDateTo.value = ''
 }
 
-function csvCell(value) {
-  const text = String(value ?? '').replace(/\r?\n/g, ' ').trim()
-  return `"${text.replace(/"/g, '""')}"`
-}
 
 function csvDateStamp() {
   const d = new Date()
@@ -1641,8 +1640,7 @@ function downloadCsv(filename, rows) {
     showError('Nenhuma OS para exportar.')
     return
   }
-  const csv = rows.map(row => row.map(csvCell).join(';')).join('\r\n')
-  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob([serializeCsv(rows)], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -2160,49 +2158,11 @@ watch(activeSubTab, (tab) => {
 })
 
 // ===== Helpers =====
-function formatDate(iso) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '-'
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
 
-function formatDateOnly(value) {
-  if (!value) return '-'
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split('-')
-    return `${day}/${month}/${year}`
-  }
-  return formatDate(value).split(' ')[0]
-}
 
-function formatTimeOnly(value) {
-  return value || '-'
-}
 
-function formatDateTimeParts(date, time, fallback) {
-  if (date && time) return `${formatDateOnly(date)} ${formatTimeOnly(time)}`
-  if (date) return formatDateOnly(date)
-  if (time) return formatTimeOnly(time)
-  return formatDate(fallback)
-}
 
-function maintenancePeriod(order) {
-  const start = formatDateTimeParts(order.maintenanceStartDate, order.maintenanceStartTime, '')
-  const end = formatDateTimeParts(order.maintenanceEndDate, order.maintenanceEndTime, '')
-  if (start === '-' && end === '-') return '-'
-  if (end === '-') return `${start} até em aberto`
-  return `${start} até ${end}`
-}
 
-function maintenanceEndLabel(order) {
-  if (order.maintenanceEndDate && order.maintenanceEndTime) {
-    return formatDateTimeParts(order.maintenanceEndDate, order.maintenanceEndTime, '')
-  }
-  if (order.maintenanceEndDate) return formatDateOnly(order.maintenanceEndDate)
-  return 'Em aberto'
-}
 
 function orderStatusLabel(order) {
   return isOrderFinished(order) ? 'Finalizada' : 'Aberta'
@@ -2214,15 +2174,7 @@ function orderStatusClass(order) {
     : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
 }
 
-function maintenanceObservation(order) {
-  return order.maintenanceNote || order.note || '-'
-}
 
-function motorOrderTitle(order) {
-  if (!order.motorId) return ''
-  const tag = order.motorTag || order.equipment || 'Sem tag'
-  return `${tag}${order.motorName ? ` - ${order.motorName}` : ''}`
-}
 
 function motorOrderEventLabel(order) {
   if (!order?.motorId) return ''
@@ -2235,24 +2187,8 @@ function motorOrderEventLabel(order) {
   return label === 'Enrolar' ? 'Enrolado' : label
 }
 
-function maintenanceLocationLabel(order) {
-  return order.maintenanceLocationName ||
-    order.maintenanceDestinationName ||
-    order.maintenanceExternalLocation ||
-    order.destinationName ||
-    '-'
-}
 
-function maintenanceLocationTypeLabel(order) {
-  if (order.maintenanceLocationType === 'interna') return 'Interna'
-  if (order.maintenanceLocationType === 'externa') return 'Externa'
-  return order.motorId ? '-' : ''
-}
 
-function orderDisplayTitle(order) {
-  if (order.motorId) return motorOrderTitle(order)
-  return order.equipment || order.destinationName || order.title || 'Sem equipamento'
-}
 
 function orderHistoryLocationLabel(order) {
   const label = order.motorId ? maintenanceLocationLabel(order) : order.destinationName
@@ -2262,15 +2198,7 @@ function orderHistoryLocationLabel(order) {
   return normalizeText(visibleLabel) === normalizeText(orderDisplayTitle(order)) ? '' : visibleLabel
 }
 
-function variationLabel(v) {
-  const vals = v.variationValues || v.values || {}
-  const parts = Object.entries(vals).map(([k, val]) => `${k}: ${val}`).filter(Boolean)
-  return parts.length ? parts.join(' - ') : '-'
-}
 
-function hierarchyLabel(item) {
-  return [item.group, item.category, item.subcategory].filter(Boolean).join(' > ')
-}
 
 function toggleOrder(id) {
   expandedOrderId.value = expandedOrderId.value === id ? null : id

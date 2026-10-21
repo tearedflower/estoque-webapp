@@ -15,7 +15,7 @@ export const DB_PATH = process.env.DB_PATH
 
 mkdirSync(dirname(DB_PATH), { recursive: true })
 
-const CURRENT_SCHEMA_VERSION = 8
+const CURRENT_SCHEMA_VERSION = 9
 const databaseExisted = existsSync(DB_PATH)
 const db = new Database(DB_PATH)
 const previousSchemaVersion = db.pragma('user_version', { simple: true })
@@ -112,6 +112,31 @@ db.exec(`
     operator_id TEXT NOT NULL,
     operator_name TEXT NOT NULL,
     movement_id TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS movement_audit (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    movement_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('update', 'delete', 'recalculate')),
+    before_json TEXT NOT NULL,
+    after_json TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    operator_id TEXT NOT NULL DEFAULT '',
+    operator_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_movement_audit_id ON movement_audit(movement_id, sequence);
+  CREATE INDEX IF NOT EXISTS idx_movements_date ON movements(date DESC, id);
+  CREATE INDEX IF NOT EXISTS idx_movements_variation_date ON movements(variation_id, date, id);
+  CREATE TABLE IF NOT EXISTS mutation_requests (
+    user_id TEXT NOT NULL,
+    route TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, route, request_key)
   );
 
   CREATE TABLE IF NOT EXISTS movement_batch_requests (
@@ -356,6 +381,9 @@ db.prepare(`INSERT OR IGNORE INTO display_order (id, data) VALUES (1, '{}')`).ru
 
 // Migration: add operator columns to movements if missing
 const movCols = db.prepare("PRAGMA table_info(movements)").all().map(c => c.name)
+if (!movCols.includes('revision')) {
+  db.prepare('ALTER TABLE movements ADD COLUMN revision INTEGER NOT NULL DEFAULT 0').run()
+}
 if (!movCols.includes('operator_id')) {
   db.prepare("ALTER TABLE movements ADD COLUMN operator_id TEXT DEFAULT ''").run()
   db.prepare("ALTER TABLE movements ADD COLUMN operator_name TEXT DEFAULT ''").run()

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { copyFile, mkdir, readdir, rename, rm, stat } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { copyVerifiedPhotos, photoUploadDir, snapshotPhotos } from './utils/backupPhotos.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_BACKUP_DIR = join(__dirname, 'backups')
@@ -61,7 +62,10 @@ async function cleanupOldBackups(dir, settings) {
   })))
   backups.sort((a, b) => b.modified - a.modified || b.name.localeCompare(a.name))
   const keep = retentionSet(backups, settings)
-  await Promise.all(backups.filter(file => !keep.has(file.name)).map(file => rm(join(dir, file.name), { force: true })))
+  for (const file of backups.filter(file => !keep.has(file.name))) {
+    await rm(join(dir, file.name), { force: true })
+    await rm(join(dir, file.name) + '.photos', { recursive: true, force: true })
+  }
 }
 
 export function verifyBackup(path) {
@@ -90,8 +94,10 @@ async function mirrorBackup(path, mirrorDir) {
   if (!mirrorDir || resolve(mirrorDir) === resolve(dirname(path))) return ''
   await mkdir(mirrorDir, { recursive: true })
   const mirroredPath = join(mirrorDir, path.split(/[\\/]/).pop())
-  await copyFile(path, mirroredPath)
-  verifyBackup(mirroredPath)
+  await copyVerifiedPhotos(path + '.photos', mirroredPath + '.photos')
+  await copyFile(path, mirroredPath + '.tmp')
+  verifyBackup(mirroredPath + '.tmp')
+  await rename(mirroredPath + '.tmp', mirroredPath)
   return mirroredPath
 }
 
@@ -109,9 +115,17 @@ export async function createBackup(db, options = {}) {
   const finalPath = join(dir, `${BACKUP_PREFIX}${timestamp()}${BACKUP_EXT}`)
   const tmpPath = `${finalPath}.tmp`
 
-  await db.backup(tmpPath)
-  verifyBackup(tmpPath)
-  await rename(tmpPath, finalPath)
+  try {
+    await db.backup(tmpPath)
+    verifyBackup(tmpPath)
+    await snapshotPhotos(tmpPath, tmpPath + '.photos', options.photoDir ?? photoUploadDir())
+    await rename(tmpPath + '.photos', finalPath + '.photos')
+    await rename(tmpPath, finalPath)
+  } catch (error) {
+    await rm(tmpPath, { force: true })
+    await rm(tmpPath + '.photos', { recursive: true, force: true })
+    throw error
+  }
   await restoreDrill(finalPath)
   await mirrorBackup(finalPath, mirrorDir)
   await cleanupOldBackups(dir, retention)

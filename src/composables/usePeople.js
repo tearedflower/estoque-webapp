@@ -102,6 +102,7 @@ export function usePeople() {
   return {
     people,
     loadData,
+    clearData: () => { people.value = [] },
     activePeople,
     personStatusLabel,
     addPerson,

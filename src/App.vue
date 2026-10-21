@@ -30,6 +30,7 @@ import { useClosings } from './composables/useClosings.js'
 import { useToast } from './composables/useToast.js'
 import { buildGlobalSearchResults } from './utils/globalSearch.js'
 import { failedSourceNames } from './utils/sync.js'
+import { createResourceLoader } from './services/resourceLoader.js'
 
 const CatalogView = defineAsyncComponent(() => import('./views/CatalogView.vue'))
 const ReportsView = defineAsyncComponent(() => import('./views/ReportsView.vue'))
@@ -46,12 +47,12 @@ const { items, variations, uniqueGroups, activeGroup, activeCategory, activeSubc
 const { loadData: loadMovements } = useMovements()
 const { loadData: loadLocations } = useLocations()
 const { destinations, getDestFullName, loadData: loadDestinations } = useDestinations()
-const { activePeople, loadData: loadPeople } = usePeople()
+const { activePeople, loadData: loadPeople, clearData: clearPeople } = usePeople()
 const { loadData: loadSuppliers } = useSuppliers()
 const { loadData: loadRoles } = useRoles()
 const { loadData: loadEpis } = useEpis()
-const { loadData: loadUsers } = useUsers()
-const { isAdmin, isLoggedIn, canOperate, user, logout, checkSession, changeOwnPassword } = useAuth()
+const { loadData: loadUsers, clearData: clearUsers } = useUsers()
+const { isAdmin, isLoggedIn, canOperate, user, logout, checkSession, changeOwnPassword, expireSession } = useAuth()
 const { workOrders, loadData: loadWorkOrders } = useWorkOrders()
 const { motors, loadData: loadMotors } = useMotors()
 const { loadData: loadClosings } = useClosings()
@@ -278,31 +279,49 @@ const globalSearchResults = computed(() => {
 })
 
 watch(globalSearchQuery, () => { globalSearchActiveIndex.value = 0 })
-// Load all data from API
-async function loadAllData() {
-  const sources = [
-    ['materiais', loadItems],
-    ['movimentações', loadMovements],
-    ['locais', loadLocations],
-    ['destinos', loadDestinations],
-    ['pessoas', loadPeople],
-    ['fornecedores', loadSuppliers],
-    ['cargos', loadRoles],
-    ['EPIs', loadEpis],
-    ['ordens de serviço', loadWorkOrders],
-    ['motores', loadMotors],
-    ['fechamentos', loadClosings],
-  ]
+const dataSources = [
+  ['materiais', loadItems], ['movimentações', loadMovements], ['locais', loadLocations],
+  ['destinos', loadDestinations],
+  ['pessoas', async () => {
+    if (!canOperate.value || user.value?.mustChangePassword) { clearPeople(); return }
+    const account = user.value.id
+    try { await loadPeople() } finally { if (user.value?.id !== account) clearPeople() }
+  }],
+  ['fornecedores', loadSuppliers], ['cargos', loadRoles], ['EPIs', loadEpis],
+  ['ordens de serviço', loadWorkOrders], ['motores', loadMotors], ['fechamentos', loadClosings],
+  ['usuários', async () => {
+    if (!isAdmin.value || user.value?.mustChangePassword) { clearUsers(); return }
+    const account = user.value.id
+    try { await loadUsers() } finally { if (user.value?.id !== account) clearUsers() }
+  }],
+]
+const resources = createResourceLoader(Object.fromEntries(dataSources))
+const tabResources = {
+  dashboard: ['materiais', 'movimentações', 'ordens de serviço', 'motores', 'fechamentos'],
+  catalogo: ['materiais', 'destinos'],
+  inventario: ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs'],
+  movimentacoes: ['materiais', 'movimentações', 'destinos', 'pessoas', 'fornecedores', 'ordens de serviço'],
+  ordens: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
+  motores: ['materiais', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
+  cadastros: ['materiais', 'locais', 'destinos', 'pessoas', 'fornecedores', 'cargos', 'EPIs', 'usuários'],
+  'epis-admin': ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs'],
+  relatorios: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores', 'fechamentos'],
+}
+let activeLoads = 0
+async function loadSources(names, force = false) {
+  activeLoads++
   syncing.value = true
   try {
-    const results = await Promise.allSettled(sources.map(([, load]) => load()))
-    syncFailures.value = failedSourceNames(sources, results)
-    if (syncFailures.value.length) console.error('Erro ao carregar dados:', syncFailures.value)
-    try { await loadUsers() } catch {}
-  } finally {
-    syncing.value = false
-  }
+    const sources = dataSources.filter(([name]) => names.includes(name))
+    const results = await Promise.allSettled(sources.map(([name]) => resources.load(name, { force })))
+    const failed = failedSourceNames(sources, results)
+    syncFailures.value = [...new Set([...syncFailures.value.filter(name => !names.includes(name)), ...failed])]
+  } finally { syncing.value = --activeLoads > 0 }
 }
+function loadAllData() { return loadSources(dataSources.map(([name]) => name), true) }
+function loadTabData() { return loadSources(tabResources[activeTab.value] || dataSources.map(([name]) => name)) }
+function invalidateResources() { resources.invalidate() }
+function refreshVisibleData() { if (document.visibilityState === 'visible') loadTabData() }
 
 async function loadLocalBrand() {
   try {
@@ -343,12 +362,18 @@ onMounted(async () => {
   window.history.replaceState(null, '', routeHref(currentRoute.value))
   window.addEventListener('hashchange', applyLocationRoute)
   window.addEventListener('app:data-invalidated', loadAllData)
+  window.addEventListener('app:resources-invalidated', invalidateResources)
+  window.addEventListener('app:session-expired', expireSession)
+  window.addEventListener('focus', refreshVisibleData)
   window.addEventListener('keydown', handleGlobalShortcutKeydown)
 })
 
 onUnmounted(() => {
   if (healthTimer) window.clearInterval(healthTimer)
   window.removeEventListener('app:data-invalidated', loadAllData)
+  window.removeEventListener('app:resources-invalidated', invalidateResources)
+  window.removeEventListener('app:session-expired', expireSession)
+  window.removeEventListener('focus', refreshVisibleData)
   window.removeEventListener('keydown', handleGlobalShortcutKeydown)
   window.removeEventListener('hashchange', applyLocationRoute)
   clearShortcutPrefix()
@@ -356,6 +381,8 @@ onUnmounted(() => {
 
 // Reload data after login
 watch(user, (newUser, oldUser) => {
+  resources.invalidate()
+  if (!newUser) { clearPeople(); clearUsers() }
   if (newUser && !oldUser) loadAllData()
   if (!isAdmin.value && ['cadastros', 'epis-admin'].includes(activeTab.value)) activeTab.value = 'catalogo'
 })
@@ -368,7 +395,7 @@ watch(activeTab, async value => {
 }, { flush: 'post' })
 
 watch(activeTab, value => {
-  loadAllData()
+  loadTabData()
   if (value === 'catalogo' || value === 'movimentacoes') catalogSidebarDismissed.value = true
   saveUiState({ activeTab: value })
 })
@@ -903,7 +930,7 @@ function handleGlobalShortcutKeydown(event) {
         <div class="min-w-0">
         <KeepAlive>
           <DashboardView v-if="activeTab === 'dashboard'" @go="navigateTab" />
-          <ReportsView v-if="activeTab === 'relatorios'" :initial-sub-tab="requestedReportsTab" @update:sub-tab="requestedReportsTab = $event" @go="navigateTab" />
+          <ReportsView v-else-if="activeTab === 'relatorios'" :initial-sub-tab="requestedReportsTab" @update:sub-tab="requestedReportsTab = $event" @go="navigateTab" />
         </KeepAlive>
 
         <!-- Catálogo tab -->

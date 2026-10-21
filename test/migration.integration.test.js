@@ -102,7 +102,7 @@ test('migração versionada cria backup antes de alterar um banco existente', { 
   backupDb.close()
 
   const migratedDb = new Database(dbPath, { readonly: true })
-  assert.equal(migratedDb.pragma('user_version', { simple: true }), 8)
+  assert.equal(migratedDb.pragma('user_version', { simple: true }), 9)
   assert.ok(migratedDb.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'expires_at'))
   assert.ok(migratedDb.prepare('PRAGMA table_info(items)').all().some(column => column.name === 'active'))
   assert.ok(migratedDb.prepare('PRAGMA table_info(items)').all().some(column => column.name === 'min_stock_defined'))

@@ -382,7 +382,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { name: 'Operador Atualizado', description: '', active: true },
   })
   assert.equal(renamedRole.response.status, 200)
-  const peopleAfterRole = await jsonRequest(url, '/api/people')
+  const peopleAfterRole = await jsonRequest(url, '/api/people', { token })
   assert.equal(peopleAfterRole.data.find(row => row.id === person.data.id).role, 'Operador Atualizado')
 
   const item = await jsonRequest(url, '/api/items', {
@@ -486,7 +486,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(importedAgain.data.peopleCreated, 0)
   assert.equal(importedAgain.data.minimumStocksUpdated, 0)
 
-  const peopleAfterImport = await jsonRequest(url, '/api/people')
+  const peopleAfterImport = await jsonRequest(url, '/api/people', { token })
   const formerPerson = peopleAfterImport.data.find(row => row.name === 'Ex Funcionário')
   assert.ok(formerPerson)
   assert.equal(formerPerson.active, false)
@@ -839,7 +839,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(inspectionAfterDelete.prepare('SELECT id FROM movements WHERE id = ?').get(movement.data.id), undefined)
   assert.equal(inspectionAfterDelete.prepare('SELECT COUNT(*) AS count FROM movement_batch_requests WHERE request_id = ?').get(batchBody.requestId).count, 1)
   assert.equal(inspectionAfterDelete.prepare('SELECT source_photo_id FROM variation_photos WHERE variation_id = ?').pluck().get('var_photo_api'), latestPhotoId)
-  assert.equal(inspectionAfterDelete.pragma('user_version', { simple: true }), 8)
+  assert.equal(inspectionAfterDelete.pragma('user_version', { simple: true }), 9)
   inspectionAfterDelete.close()
 
   const deletedVariation = await jsonRequest(url, `/api/items/variations/${variation.data.id}`, {
