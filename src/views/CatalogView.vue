@@ -4,7 +4,7 @@ import { stockAlertTransition, useItems } from '../composables/useItems.js'
 import { useMovements } from '../composables/useMovements.js'
 import { useToast } from '../composables/useToast.js'
 import { useDestinations } from '../composables/useDestinations.js'
-import { useLocations } from '../composables/useLocations.js'
+import DestinationTreePicker from '../components/ui/DestinationTreePicker.vue'
 import { useWorkOrders } from '../composables/useWorkOrders.js'
 import { generateSeedData } from '../data/seedData.js'
 import {
@@ -45,8 +45,7 @@ const {
 const { success, error } = useToast()
 const { movements, addMovement } = useMovements()
 const { workOrders } = useWorkOrders()
-const { activeDestinations, groupedDestinations, getDestinationName, getDestFullName } = useDestinations()
-const { activeLocais, groupedLocais, getFullName } = useLocations()
+const { getDestinationName } = useDestinations()
 const showSeedTools = import.meta.env.VITE_ENABLE_SEED_TOOLS === 'true'
 
 // ===== Search =====
@@ -331,8 +330,6 @@ function startDirectVariation() {
   directVariationCategory.value = activeCategory.value || ''
   directVariationSubcategory.value = activeSubcategory.value || ''
   resetDirectVariationForm()
-  localDropOpen.value = false
-  destsDropOpen.value = false
   nextTick(() => {
     const el = document.querySelector('.direct-variation-select')
     if (el) el.focus()
@@ -421,104 +418,6 @@ async function saveVariation() {
 function cancelVariation() {
   addingVariation.value = false
   directVariationMode.value = false
-  localDropOpen.value = false
-  destsDropOpen.value = false
-  destsSearch.value = ''
-}
-
-// ===== Combobox dropdowns (Local + Destinos) =====
-const localDropOpen = ref(false)
-const destsDropOpen = ref(false)
-const destsSearch = ref('')
-const localDropStyle = ref({})
-const destsDropStyle = ref({})
-
-const localDisplayList = computed(() => {
-  const list = []
-  for (const g of groupedLocais.value) {
-    const fullName = g.parent.name
-    list.push({ id: g.parent.id, label: fullName, indent: false })
-    for (const c of g.children) {
-      list.push({ id: c.id, label: `${g.parent.name} > ${c.name}`, indent: true })
-    }
-  }
-  return list
-})
-
-const localFilteredLocais = computed(() => {
-  const q = (varForm.value.location || '').toLowerCase()
-  if (!q) return localDisplayList.value
-  return localDisplayList.value.filter(l => l.label.toLowerCase().includes(q))
-})
-
-const destDisplayList = computed(() => {
-  const list = []
-  for (const g of groupedDestinations.value) {
-    list.push({ id: g.parent.id, label: g.parent.name, indent: false })
-    for (const c of g.children) {
-      list.push({ id: c.id, label: getDestFullName(c.id), indent: true })
-    }
-  }
-  return list
-})
-
-const destsFiltered = computed(() => {
-  const q = destsSearch.value.toLowerCase()
-  if (!q) return destDisplayList.value
-  return destDisplayList.value.filter(d => d.label.toLowerCase().includes(q))
-})
-
-function _rectStyle(el, minW = 0) {
-  const r = el.getBoundingClientRect()
-  return { position: 'fixed', top: (r.bottom + 4) + 'px', left: r.left + 'px', width: Math.max(r.width, minW) + 'px', zIndex: 9999 }
-}
-
-function openLocalDrop(inputEl) {
-  if (!localDisplayList.value.length) return
-  localDropStyle.value = _rectStyle(inputEl)
-  localDropOpen.value = true
-}
-
-function openDestsDrop(inputEl) {
-  if (!activeDestinations.value.length) return
-  const wrapper = inputEl.closest('.dests-wrapper') || inputEl
-  destsDropStyle.value = _rectStyle(wrapper, 220)
-  destsDropOpen.value = true
-}
-
-function selectLocal(label) {
-  varForm.value.location = label
-  localDropOpen.value = false
-}
-
-function selectFirstLocal() {
-  if (localDropOpen.value && localFilteredLocais.value.length) {
-    selectLocal(localFilteredLocais.value[0].label)
-  }
-}
-
-function toggleDest(id) {
-  const idx = varForm.value.destinations.indexOf(id)
-  if (idx === -1) varForm.value.destinations.push(id)
-  else varForm.value.destinations.splice(idx, 1)
-  destsSearch.value = ''
-}
-
-function selectFirstDest() {
-  if (destsDropOpen.value && destsFiltered.value.length) {
-    toggleDest(destsFiltered.value[0].id)
-  }
-}
-
-function handleDestsBackspace() {
-  if (destsSearch.value === '' && varForm.value.destinations.length) {
-    varForm.value.destinations.pop()
-  }
-}
-
-function closeAllDrops() {
-  localDropOpen.value = false
-  destsDropOpen.value = false
 }
 
 // ===== Variation Modal =====
@@ -1450,49 +1349,13 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
         <!-- Location -->
         <div class="mb-4">
           <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Local</label>
-          <input
-            v-model="varForm.location"
-            type="text"
-            placeholder="Digite ou selecione..."
-            autocomplete="off"
-            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors"
-            @focus="e => openLocalDrop(e.currentTarget)"
-            @input="e => openLocalDrop(e.currentTarget)"
-            @keydown.enter.prevent="selectFirstLocal"
-            @keydown.escape.stop="localDropOpen ? (localDropOpen = false) : cancelVariation()"
-          />
+          <DestinationTreePicker v-model="varForm.location" source="locations" placeholder="Selecione ou busque um local..." />
         </div>
 
         <!-- Destinations -->
         <div class="mb-4">
           <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Destinos</label>
-          <div
-            class="dests-wrapper flex flex-wrap gap-1 items-center min-h-[38px] px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 cursor-text focus-within:border-primary-500 focus-within:ring-1 focus-within:ring-primary-500 transition-colors"
-            @click="$event.currentTarget.querySelector('input')?.focus()"
-          >
-            <span
-              v-for="dId in varForm.destinations"
-              :key="dId"
-              class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 text-xs"
-            >
-              {{ getDestinationName(dId) }}
-              <button type="button" class="hover:text-red-500" @click.stop="toggleDest(dId)">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-              </button>
-            </span>
-            <input
-              v-model="destsSearch"
-              type="text"
-              :placeholder="varForm.destinations.length ? '' : 'Destinos...'"
-              autocomplete="off"
-              class="flex-1 min-w-[60px] bg-transparent text-sm text-gray-800 dark:text-gray-100 outline-none placeholder-gray-400 py-0.5"
-              @focus="e => openDestsDrop(e.currentTarget)"
-              @input="e => openDestsDrop(e.currentTarget)"
-              @keydown.enter.prevent="selectFirstDest"
-              @keydown.escape.stop="destsDropOpen ? (destsDropOpen = false) : cancelVariation()"
-              @keydown.backspace="handleDestsBackspace"
-            />
-          </div>
+          <DestinationTreePicker v-model="varForm.destinations" multiple placeholder="Selecione ou busque destinos..." />
         </div>
 
         <!-- Extras (obs) -->
@@ -1542,58 +1405,7 @@ defineExpose({ triggerSearchDrill, openItemById, openVariationById })
       </div>
   </AppDialog>
 
-  <!-- Teleported combobox dropdowns — renders outside any overflow-hidden container -->
-  <Teleport to="body">
-    <!-- Transparent backdrop: click outside closes dropdowns -->
-    <div v-if="localDropOpen || destsDropOpen" class="fixed inset-0" style="z-index:9998" @click="closeAllDrops" />
 
-    <!-- Local suggestions (grouped) -->
-    <div
-      v-if="localDropOpen && localFilteredLocais.length"
-      :style="[localDropStyle, { minWidth: 'max-content' }]"
-      class="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-xl py-1 max-h-48 overflow-y-auto"
-    >
-      <button
-        v-for="l in localFilteredLocais" :key="l.id"
-        type="button"
-        class="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 flex items-center gap-2"
-        :class="l.indent ? 'pl-7' : 'font-medium'"
-        @mousedown.prevent="selectLocal(l.label)"
-      >
-        <svg v-if="!l.indent" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" /></svg>
-        <svg v-else class="w-3 h-3 flex-shrink-0 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-        {{ l.indent ? l.label.split(' > ').pop() : l.label }}
-      </button>
-    </div>
-
-    <!-- Destinations multi-select -->
-    <div
-      v-if="destsDropOpen && destDisplayList.length"
-      :style="destsDropStyle"
-      class="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-xl overflow-hidden py-1 max-h-52 overflow-y-auto"
-    >
-      <button
-        v-for="d in destsFiltered" :key="d.id"
-        type="button"
-        class="w-full flex items-center gap-2.5 py-1.5 hover:bg-primary-50 dark:hover:bg-primary-900/20 cursor-pointer text-left"
-        :class="d.indent ? 'pl-7 pr-3' : 'px-3'"
-        @mousedown.prevent="toggleDest(d.id)"
-      >
-        <span
-          class="flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors"
-          :class="varForm.destinations.includes(d.id)
-            ? 'bg-primary-600 border-primary-600'
-            : 'border-gray-300 dark:border-gray-500'"
-        >
-          <svg v-if="varForm.destinations.includes(d.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-        </span>
-        <svg v-if="!d.indent" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" /></svg>
-        <svg v-else class="w-3 h-3 flex-shrink-0 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-        <span class="text-sm" :class="d.indent ? 'text-gray-700 dark:text-gray-200' : 'font-medium text-gray-800 dark:text-gray-100'">{{ d.indent ? d.label.split(' > ').pop() : d.label }}</span>
-      </button>
-      <p v-if="destsSearch && !destsFiltered.length" class="px-3 py-2 text-xs text-gray-400 italic">Nenhum resultado para "{{ destsSearch }}"</p>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>

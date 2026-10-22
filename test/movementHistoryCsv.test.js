@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { effectScope, ref } from 'vue'
+import { effectScope, nextTick, ref } from 'vue'
 import { useMovementHistory } from '../src/composables/useMovementHistory.js'
 import { movementHistoryCsv } from '../src/utils/movementHistoryCsv.js'
 
@@ -31,4 +31,36 @@ test('CSV exports every matching history row across pages with combined search, 
       assert.equal(movementHistoryCsv(history.filteredMovements.value).split('\r\n').length, 1)
     })
   } finally { scope.stop() }
+})
+
+test('history from a ranking isolates the variation, persists it and clears it with other filters', async () => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  const values = new Map()
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  } })
+  const scope = effectScope()
+  try {
+    const base = { itemName: 'Rolamento', type: 'saida', qty: 1, date: '2026-10-01', itemUnit: 'UN' }
+    const movements = ref([{ ...base, variationId: 'v1' }, { ...base, variationId: 'v2' }, { ...base, variationId: 'v1', type: 'entrada', date: '2026-09-01' }])
+    const history = scope.run(() => useMovementHistory(movements))
+    history.histSearch.value = 'Rolamento'
+    history.histVariationId.value = 'v1'
+    assert.equal(history.filteredMovements.value.length, 2)
+    assert.ok(history.filteredMovements.value.every(row => row.variationId === 'v1'))
+    assert.equal(history.histFacets.value.find(row => row.key === 'tipo').options.length, 2)
+    assert.equal(movementHistoryCsv(history.filteredMovements.value).split('\r\n').length, 3)
+    await nextTick()
+    const reloaded = scope.run(() => useMovementHistory(movements))
+    assert.equal(reloaded.histVariationId.value, 'v1')
+    reloaded.clearHistFilters()
+    assert.equal(reloaded.histVariationId.value, '')
+    assert.equal(reloaded.hasHistFilters.value, false)
+    assert.equal(reloaded.filteredMovements.value.length, 3)
+  } finally {
+    scope.stop()
+    if (previousStorage) Object.defineProperty(globalThis, 'sessionStorage', previousStorage)
+    else delete globalThis.sessionStorage
+  }
 })

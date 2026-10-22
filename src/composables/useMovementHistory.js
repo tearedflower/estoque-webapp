@@ -49,6 +49,7 @@ const FIELD_BY_FILTER = {
 export function useMovementHistory(movements) {
   const saved = loadHistoryState()
   const histSearch = ref(typeof saved.search === 'string' ? saved.search : '')
+  const histVariationId = ref(typeof saved.variationId === 'string' ? saved.variationId : '')
   const histDateFrom = ref(typeof saved.dateFrom === 'string' ? saved.dateFrom : '')
   const histDateTo = ref(typeof saved.dateTo === 'string' ? saved.dateTo : '')
   const histFilters = ref(savedFilters(saved.filters))
@@ -95,6 +96,7 @@ export function useMovementHistory(movements) {
       end = to.getTime()
     }
     return searchIndex.value.filter(entry => (!q || entry.text.includes(q)) &&
+      (!histVariationId.value || entry.movement.variationId === histVariationId.value) &&
       (from === null || !(entry.date < from)) && (end === null || !(entry.date >= end)))
       .map(entry => entry.movement)
   })
@@ -153,6 +155,7 @@ export function useMovementHistory(movements) {
   })
 
   const hasHistFilters = computed(() =>
+    Boolean(histVariationId.value) ||
     histSearch.value.trim().length > 0 ||
     histDateFrom.value !== '' ||
     histDateTo.value !== '' ||
@@ -168,6 +171,7 @@ export function useMovementHistory(movements) {
   }
 
   function clearHistFilters() {
+    histVariationId.value = ''
     histSearch.value = ''
     histDateFrom.value = ''
     histDateTo.value = ''
@@ -184,10 +188,11 @@ export function useMovementHistory(movements) {
     return filteredMovements.value.slice(start, start + historyPageSize.value)
   })
 
-  watch([histSearch, histDateFrom, histDateTo, histFilters, historyPageSize], () => {
+  watch([histSearch, histVariationId, histDateFrom, histDateTo, histFilters, historyPageSize], () => {
     historyCurrentPage.value = 1
     saveHistoryState({
       search: histSearch.value,
+      variationId: histVariationId.value,
       dateFrom: histDateFrom.value,
       dateTo: histDateTo.value,
       filters: histFilters.value,
@@ -210,6 +215,7 @@ export function useMovementHistory(movements) {
   })
 
   return {
+    histVariationId,
     histSearch,
     histDateFrom,
     histDateTo,

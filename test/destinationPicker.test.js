@@ -100,3 +100,31 @@ test('Other is keyboard selectable and multiple locations retain paths without r
     assert.equal(focusCalls, 0)
   } finally { other.stop(); multiple.stop() }
 })
+
+test('multiple destinations can be chosen without typing and keep IDs for variation saving', async () => {
+  const p = picker({ multiple: true, modelValue: ['oficina'] })
+  try {
+    for (let i = 0; i < p.keyboardOptions.value.length; i++) p.moveActive(1)
+    assert.equal(p.search.value, '')
+    assert.equal(p.keyboardOptions.value[p.activeIndex.value].destination.id, 'epi')
+    p.handleEnter()
+    assert.deepEqual(p.events.find(([name]) => name === 'update:modelValue'), ['update:modelValue', ['oficina', 'epi']])
+    p.props.modelValue = ['oficina', 'epi']
+    p.events.length = 0
+    await nextTick()
+    p.handleEnter()
+    assert.equal(p.events.filter(([name]) => name === 'update:modelValue').length, 0)
+    assert.deepEqual(p.props.modelValue, ['oficina', 'epi'])
+  } finally { p.stop() }
+})
+
+test('single location selection saves its full path instead of a destination ID', async () => {
+  const p = picker({ source: 'locations', modelValue: 'Salão' })
+  try {
+    p.moveActive(1)
+    p.moveActive(1)
+    p.handleEnter()
+    assert.deepEqual(p.events.find(([name]) => name === 'update:modelValue'), ['update:modelValue', names.oficina])
+    assert.equal(p.open.value, false)
+  } finally { p.stop() }
+})

@@ -39,6 +39,7 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  initialHistoryVariationId: { type: String, default: '' },
   prefillMovement: {
     type: Object,
     default: null,
@@ -1191,6 +1192,7 @@ function movementDateLabel(iso) {
 
 const {
   histSearch,
+  histVariationId,
   histDateFrom,
   histDateTo,
   histFacets,
@@ -1238,7 +1240,11 @@ function successWithHistoryAction(message) {
   })
 }
 
-watch(() => props.initialHistorySearch, search => {
+watch(() => [props.initialHistorySearch, props.initialHistoryVariationId], ([search, variationId]) => {
+  if (variationId) {
+    clearHistFilters()
+    histVariationId.value = variationId
+  }
   if (search !== null) histSearch.value = search || ''
 }, { immediate: true })
 
@@ -1473,6 +1479,7 @@ async function saveEditMovement() {
 }
 
 defineExpose({
+  histVariationId,
   histFacets,
   hasHistFilters,
   toggleHistFilter,
@@ -2533,7 +2540,6 @@ defineExpose({
       <div class="movement-history-toolbar">
       <div class="ds-query-bar" role="search" aria-label="Busca no histórico">
         <input v-model="histSearch" class="ds-query-input" type="search" aria-label="Buscar no histórico" placeholder="Buscar material, pessoa, destino ou documento…" />
-        <AppButton v-if="hasHistFilters" variant="secondary" @click="clearHistFilters">Limpar filtros</AppButton>
       </div>
       <label class="movement-history-date"><span class="movement-label">De</span><input v-model="histDateFrom" type="date" aria-label="Data inicial" /></label>
       <label class="movement-history-date"><span class="movement-label">Até</span><input v-model="histDateTo" type="date" aria-label="Data final" /></label>
@@ -2563,6 +2569,7 @@ defineExpose({
           <AppButton v-if="extraHistoryFacets.length" variant="secondary" size="sm" @click="historyFilterSearch = ''; moreHistoryFiltersOpen = true">
             Mais filtros<span v-if="extraHistorySelectedCount"> ({{ extraHistorySelectedCount }})</span>
           </AppButton>
+          <AppButton v-if="hasHistFilters" variant="secondary" size="sm" @click="clearHistFilters">Limpar filtros</AppButton>
           <span class="movement-result-count" role="status">{{ filteredMovements.length }} movimentações</span>
       </div>
       <AppDialog :visible="moreHistoryFiltersOpen" aria-label="Mais filtros do histórico" @close="moreHistoryFiltersOpen = false">
@@ -2589,7 +2596,8 @@ defineExpose({
           </footer>
         </section>
       </AppDialog>
-      <div v-if="selectedHistoryFilters.length" class="movement-filter-tags" aria-label="Filtros ativos">
+      <div v-if="selectedHistoryFilters.length || histVariationId" class="movement-filter-tags" aria-label="Filtros ativos">
+        <button v-if="histVariationId" type="button" aria-label="Remover filtro da variação" @click="histVariationId = ''">Variação do relatório <span aria-hidden="true">×</span></button>
         <button v-for="filter in selectedHistoryFilters" :key="filter.key + filter.value" type="button"
           :aria-label="`Remover filtro ${filter.label}: ${filter.value}`" @click="toggleHistFilter(filter.key, filter.value)">
           {{ filter.label }}: {{ filter.value }} <span aria-hidden="true">×</span>

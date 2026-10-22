@@ -699,7 +699,7 @@ const currentRoute = computed(() => {
   if (route.tab === 'relatorios') route.subTab = requestedReportsTab.value
   if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value, highlightVariationId: requestedHighlightVariationId.value })
   if (route.tab === 'inventario') Object.assign(route, { section: requestedInventorySection.value, status: requestedInventoryStatus.value, search: requestedInventorySearch.value, variationId: requestedVariationId.value })
-  if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '' })
+  if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '', variationId: movSubTab.value === 'historico' ? (movRef.value?.histVariationId ?? requestedVariationId.value) : '' })
   if (route.tab === 'cadastros') route.subTab = requestedCadastrosTab.value
   if (route.tab === 'ordens') Object.assign(route, { subTab: requestedOrdersTab.value, orderId: workOrderPreview.value?.id || requestedOrderFocusId.value })
   return route
@@ -890,6 +890,7 @@ function handleGlobalShortcutKeydown(event) {
           ref="movRef"
           :initial-sub-tab="requestedMovSubTab"
           :initial-history-search="requestedMovSearch"
+          :initial-history-variation-id="requestedMovSubTab === 'historico' ? requestedVariationId : ''"
           :prefill-movement="requestedMovementPrefill"
           @update:sub-tab="v => { movSubTab = v; requestedMovSubTab = v }"
           @movement-complete="handleMovementComplete"

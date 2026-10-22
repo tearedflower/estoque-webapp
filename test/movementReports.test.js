@@ -75,3 +75,71 @@ test('annual reports include all months of only the selected year and keep ranki
   assert.equal(buildMovementReport(rows, '2025', filters).materials[0].qty, 100)
   assert.equal(buildMovementReport(rows, '2026-13', filters).exits, 0)
 })
+
+test('exit values use the last known purchase at the time, even outside period and classification filters', () => {
+  const base = { itemName: 'Rolamento', itemUnit: 'UN', variationId: 'r1', itemGroup: 'Transmissão', qty: 2, destination: 'Oficina', type: 'saida' }
+  const rows = [
+    { ...base, date: '2026-10-20T12:00:00', type: 'entrada', unitCost: 999 },
+    { ...base, date: '2026-10-15T12:00:00', qty: 3 },
+    { ...base, date: '2026-10-12T12:00:00', type: 'entrada', unitCost: 30 },
+    { ...base, date: '2026-10-11T12:00:00', type: 'entrada', unitCost: 888, docRef: 'AJUSTE' },
+    { ...base, date: '2026-10-10T12:00:00' },
+    { ...base, date: '2026-09-10T12:00:00', type: 'entrada', itemGroup: 'Peças Industriais', unitCost: 10, destination: '' },
+    { ...base, variationId: 'r2', date: '2026-10-14T12:00:00' },
+    { ...base, date: '2026-10-01T12:00:00', qty: 100, docRef: 'CONFERÊNCIA INICIAL' },
+  ]
+  const report = buildMovementReport(rows, '2026-10', { group: 'Transmissão', destination: 'Oficina' })
+  assert.equal(report.estimatedExitValue, 110)
+  assert.equal(report.unpricedExits, 1)
+  const material = report.materials.find(row => row.id.includes('r1'))
+  assert.equal(material.estimatedValue, 110)
+  assert.equal(material.averageUnitCost, 22)
+  assert.equal(material.qty, 5)
+  assert.equal(material.unpricedCount, 0)
+  assert.equal(report.materials.find(row => row.id.includes('r2')).estimatedValue, null)
+  assert.equal(report.destinations[0].estimatedValue, 110)
+  assert.equal(report.destinations[0].unpricedCount, 1)
+  assert.equal(buildMovementReport(rows, '2026').estimatedExitValue, 110)
+})
+
+test('valuation distinguishes unknown costs from free purchases and isolates variations and units', () => {
+  const base = { itemName: 'Peça', itemUnit: 'UN', variationId: 'v', qty: 1, type: 'entrada' }
+  const rows = [
+    { ...base, date: '2026-10-01', unitCost: null },
+    { ...base, date: '2026-10-02', type: 'saida' },
+    { ...base, date: '2026-10-03', unitCost: 0 },
+    { ...base, date: '2026-10-04', unitCost: '' },
+    { ...base, date: '2026-10-05', unitCost: -9 },
+    { ...base, date: '2026-10-06', type: 'saida', qty: 2 },
+    { ...base, date: '2026-10-07', type: 'saida', itemUnit: 'PAR' },
+    { ...base, date: '2026-10-08', unitCost: 0.1 },
+    { ...base, date: '2026-10-09', type: 'saida', qty: 3 },
+    { ...base, date: 'invalid', unitCost: 999 },
+  ]
+  const report = buildMovementReport(rows, '2026-10')
+  assert.equal(report.estimatedExitValue, 0.4)
+  assert.equal(report.unpricedExits, 1)
+  assert.equal(report.referenceCostExits, 1)
+  assert.equal(report.materials.find(row => row.unit === 'UN').pricedQty, 6)
+  assert.equal(report.materials.find(row => row.unit === 'UN').averageUnitCost, 0.4 / 6)
+  assert.equal(report.materials.find(row => row.unit === 'PAR').estimatedValue, null)
+  const free = buildMovementReport(rows.slice(2, 6), '2026-10')
+  assert.equal(free.estimatedExitValue, 0)
+  assert.equal(free.unpricedExits, 0)
+  assert.equal(buildMovementReport(rows.slice(0, 2), '2026-10').estimatedExitValue, null)
+})
+
+test('later purchase cost fills missing references, is marked as estimated and never overrides a known historical cost', () => {
+  const base = { itemName: 'Respirador', itemUnit: 'UN', variationId: 'respirador', qty: 4, type: 'saida', date: '2026-10-08', destination: 'EPI' }
+  const rows = [base, { ...base }, { ...base, type: 'entrada', date: '2026-10-22', qty: 1, unitCost: 4.85 }]
+  const report = buildMovementReport(rows, '2026-10', { destination: 'EPI' })
+  assert.equal(report.estimatedExitValue, 38.8)
+  assert.equal(report.materials[0].averageUnitCost, 4.85)
+  assert.equal(report.unpricedExits, 0)
+  assert.equal(report.referenceCostExits, 2)
+  assert.equal(report.materials[0].referenceCostCount, 2)
+  assert.equal(report.destinations[0].referenceCostCount, 2)
+  const historical = buildMovementReport([...rows, { ...base, type: 'entrada', date: '2026-09-01', qty: 10, unitCost: 2 }], '2026-10')
+  assert.equal(historical.estimatedExitValue, 16)
+  assert.equal(historical.referenceCostExits, 0)
+})

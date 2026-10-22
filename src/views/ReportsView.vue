@@ -26,11 +26,20 @@ const periodMode = ref('month')
 const group = ref('')
 const category = ref('')
 const selectedDestination = ref(null)
+const rankBy = ref('value')
+const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
+const money = value => value === null || value === undefined ? 'Sem custo de entrada' : currency.format(value)
+const historyTarget = row => ({ tab: 'movimentacoes', subTab: 'historico', search: row.name, variationId: row.variationId || '' })
+function orderedRows(rows) {
+  return [...rows].sort((a, b) => (rankBy.value === 'value' ? (b.estimatedValue ?? -1) - (a.estimatedValue ?? -1) : 0)
+    || b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'))
+}
 const selectedMonth = computed({ get: () => month.value.slice(5), set: value => { month.value = `${selectedYear.value}-${value}` } })
 const selectedYear = computed({ get: () => month.value.slice(0, 4), set: value => { month.value = `${value}-${selectedMonth.value}` } })
 const reportPeriod = computed(() => periodMode.value === 'year' ? selectedYear.value : month.value)
 const months = Array.from({ length: 12 }, (_, index) => ({ value: String(index + 1).padStart(2, '0'), label: new Date(2000, index, 1).toLocaleDateString('pt-BR', { month: 'long' }) }))
 const pages = ref({})
+watch(rankBy, () => { pages.value = {} })
 const pageSize = 6
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 })
 const format = value => number.format(value)
@@ -53,8 +62,8 @@ const { destinations, getDestFullName } = useDestinations()
 const groups = computed(() => [...new Set(movements.value.map(row => row.itemGroup).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')))
 const categories = computed(() => [...new Set(movements.value.filter(row => !group.value || row.itemGroup === group.value).map(row => row.itemCategory).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')))
 const report = computed(() => buildMovementReport(movements.value, reportPeriod.value, { group: group.value, category: category.value }))
-const materialRanking = computed(() => selectedDestination.value === null ? report.value.materials
-  : buildMovementReport(movements.value, reportPeriod.value, { group: group.value, category: category.value, destination: selectedDestination.value }).materials)
+const materialRanking = computed(() => orderedRows(selectedDestination.value === null ? report.value.materials
+  : buildMovementReport(movements.value, reportPeriod.value, { group: group.value, category: category.value, destination: selectedDestination.value }).materials))
 const rankingPanel = computed(() => ({ id: 'ranking', rows: materialRanking.value, pageSize: 20 }))
 const stockRows = computed(() => {
   const byId = new Map(items.value.map(item => [item.id, item]))
@@ -77,6 +86,8 @@ const metrics = computed(() => {
     { label: 'Saídas', value: report.value.exits, note: 'registros no período', tone: 'danger' },
     { label: 'Variações movimentadas', value: report.value.variations, note: 'sem ajustes de estoque', tone: 'info' },
     { label: 'Ajustes e conferências', value: report.value.adjustments, note: 'separados do consumo', tone: 'warning' },
+    { label: 'Valor estimado das saídas', value: money(report.value.estimatedExitValue), note: '', tone: 'info' },
+    { label: 'Sem custo de entrada', value: report.value.unpricedExits, note: 'retiradas fora do total estimado', tone: 'warning' },
   ]
   if (section.value === 'estoque') return [
     { label: 'Sem estoque', value: stockRows.value.filter(row => row.status === 'zero').length, note: 'variações', tone: 'danger' },
@@ -92,13 +103,16 @@ const metrics = computed(() => {
 })
 const panels = computed(() => {
   if (section.value === 'movimentacoes') return [
-    { id: 'materials', title: 'Materiais com mais retiradas', description: 'Ordenados por número de saídas. Quantidades mantêm a unidade de cada variação.', empty: 'Nenhuma saída registrada neste período.', rows: report.value.materials.map(row => ({
-      id: row.id, title: row.name, item: items.value.find(item => item.id === row.itemId), variation: { values: row.values, extras: row.extras }, detail: `${row.count} saída${row.count === 1 ? '' : 's'}`,
+    { id: 'materials', title: rankBy.value === 'value' ? 'Materiais com maior valor retirado' : 'Materiais com mais retiradas', description: '', empty: 'Nenhuma saída registrada neste período.', rows: orderedRows(report.value.materials).map(row => ({
+      id: row.id, title: row.name, item: items.value.find(item => item.id === row.itemId), variation: { values: row.values, extras: row.extras }, detail: `${row.count} saída${row.count === 1 ? '' : 's'} · Custo unitário médio: ${money(row.averageUnitCost)}`,
       value: `${format(row.qty)} ${row.unit}`,
+      cost: money(row.estimatedValue),
+      historyTarget: historyTarget(row),
     })) },
-    { id: 'destinations', title: 'Destinos com mais retiradas', description: 'Ordenados por número de saídas, sem somar unidades diferentes.', empty: 'Nenhum consumo por destino neste período.', rows: report.value.destinations.map(row => ({
+    { id: 'destinations', title: rankBy.value === 'value' ? 'Destinos com maior valor retirado' : 'Destinos com mais retiradas', description: '', empty: 'Nenhum consumo por destino neste período.', rows: orderedRows(report.value.destinations).map(row => ({
       id: row.id, title: row.name, detail: row.units.map(([unit, qty]) => `${format(qty)} ${unit}`).join(' · '),
       value: `${row.count} saída${row.count === 1 ? '' : 's'} →`, destination: row.name,
+      cost: money(row.estimatedValue),
     })) },
   ]
   if (section.value === 'estoque') return [
@@ -167,22 +181,25 @@ function changePage(panel, direction) { pages.value[panel.id] = Math.min(pageCou
     <AppDialog :visible="section === 'movimentacoes' && selectedDestination !== null" :aria-label="`Ranking de materiais · ${selectedDestination || ''}`" @close="selectedDestination = null">
     <section class="reports-panel reports-ranking" aria-label="Ranking de materiais por destino">
       <header class="reports-ranking-header">
-        <div><h2>Ranking de materiais · {{ selectedDestination }}</h2><p>{{ periodLabel }} · {{ materialRanking.length }} variações · ordenado por número de saídas</p></div>
+        <div><h2>Ranking de materiais · {{ selectedDestination }}</h2><p>{{ periodLabel }} · {{ materialRanking.length }} variações</p></div>
         <AppButton variant="ghost" size="icon" aria-label="Fechar ranking" @click="selectedDestination = null">×</AppButton>
       </header>
       <div class="reports-ranking-scroll">
         <table class="ds-table reports-ranking-table">
           <caption class="sr-only">Materiais retirados para {{ selectedDestination }} em {{ periodLabel }}</caption>
-          <thead><tr><th scope="col">Posição</th><th scope="col">Material</th><th scope="col">Variação</th><th scope="col" class="text-right">Saídas</th><th scope="col" class="text-right">Quantidade retirada</th></tr></thead>
+          <thead><tr><th scope="col">Posição</th><th scope="col">Material</th><th scope="col">Variação</th><th scope="col" class="text-right">Saídas</th><th scope="col" class="text-right">Quantidade retirada</th><th scope="col" class="text-right">Custo unitário médio</th><th scope="col" class="text-right">Valor estimado</th><th scope="col">Ações</th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in panelRows(rankingPanel)" :key="row.id">
               <td class="reports-ranking-position">{{ (currentPage(rankingPanel) - 1) * rankingPanel.pageSize + index + 1 }}º</td>
               <td class="reports-ranking-name">{{ row.name }}</td>
-              <td><AttributeBadges :item="items.find(item => item.id === row.itemId)" :variation="{ values: row.values, extras: row.extras }" compact /></td>
+              <td class="reports-ranking-attributes"><AttributeBadges :item="items.find(item => item.id === row.itemId)" :variation="{ values: row.values, extras: row.extras }" compact /></td>
               <td class="text-right">{{ format(row.count) }}</td>
               <td class="text-right"><strong>{{ format(row.qty) }}</strong> <span class="reports-ranking-unit">{{ row.unit }}</span></td>
+              <td class="text-right">{{ money(row.averageUnitCost) }}</td>
+              <td class="text-right"><strong>{{ money(row.estimatedValue) }}</strong></td>
+              <td class="reports-ranking-actions"><AppLink :target="historyTarget(row)" class="ds-button ds-button-secondary ds-button-sm" @navigate="emit('go', $event)">Ver histórico →</AppLink></td>
             </tr>
-            <tr v-if="!materialRanking.length"><td colspan="5" class="reports-empty">Nenhuma saída registrada para este destino com os filtros selecionados.</td></tr>
+            <tr v-if="!materialRanking.length"><td colspan="8" class="reports-empty">Nenhuma saída registrada para este destino com os filtros selecionados.</td></tr>
           </tbody>
         </table>
       </div>
@@ -192,13 +209,16 @@ function changePage(panel, direction) { pages.value[panel.id] = Math.min(pageCou
       </footer>
     </section>
     </AppDialog>
+    <div v-if="section === 'movimentacoes'" class="reports-filters">
+      <label>Ordenar rankings<select v-model="rankBy" class="ds-input"><option value="value">Maior valor retirado</option><option value="count">Mais saídas</option></select></label>
+    </div>
     <div class="reports-grid">
       <section v-for="panel in panels" :key="panel.id" class="reports-panel">
-        <header><div><h2>{{ panel.title }}</h2><p>{{ panel.description }}</p></div></header>
+        <header><div><h2>{{ panel.title }}</h2><p v-if="panel.description">{{ panel.description }}</p></div></header>
         <p v-if="!panel.rows.length" class="reports-empty">{{ panel.empty }}</p>
         <component :is="row.destination !== undefined ? 'button' : row.target ? AppLink : 'article'" v-for="row in panelRows(panel)" :key="row.id" :target="row.target" :type="row.destination !== undefined ? 'button' : undefined" class="reports-row" @click="row.destination !== undefined && (selectedDestination = row.destination)" @navigate="emit('go', $event)">
           <div class="reports-row-content"><h3>{{ row.title }}</h3><AttributeBadges v-if="row.variation" class="reports-attributes mt-2" :item="row.item" :variation="row.variation" /><p v-if="row.detail">{{ row.detail }}</p></div>
-          <div class="reports-row-value"><strong>{{ row.value }}</strong><StatusBadge v-if="row.status" :status="row.status" :label="row.statusLabel" /></div>
+          <div class="reports-row-value"><strong>{{ row.value }}</strong><strong v-if="row.cost" class="reports-row-cost">{{ row.cost }}</strong><AppLink v-if="row.historyTarget" :target="row.historyTarget" class="ds-button ds-button-secondary ds-button-sm" @navigate="emit('go', $event)">Ver histórico →</AppLink><StatusBadge v-if="row.status" :status="row.status" :label="row.statusLabel" /></div>
         </component>
         <footer v-if="panel.rows.length">
           <span>{{ panel.rows.length }} registros</span>
@@ -206,7 +226,6 @@ function changePage(panel, direction) { pages.value[panel.id] = Math.min(pageCou
         </footer>
       </section>
     </div>
-    <p v-if="section === 'movimentacoes' && selectedDestination === null" class="reports-note">Clique em um destino para abrir a lista de materiais do ranking no período e nos filtros selecionados.</p>
   </div>
 </template>
 
@@ -242,28 +261,35 @@ function changePage(panel, direction) { pages.value[panel.id] = Math.min(pageCou
 .reports-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
 .reports-panel { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--ds-border); border-radius: var(--ds-radius-card); background: var(--ds-panel); overflow: hidden; }
 .reports-panel > header { min-height: 84px; padding: 16px; border-bottom: 1px solid var(--ds-border-subtle); }
-.reports-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 120px; padding: 16px 20px; border-bottom: 1px solid var(--ds-border-subtle); }
+.reports-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 96px; padding: 12px 16px; border-bottom: 1px solid var(--ds-border-subtle); }
 .reports-row:hover { background: var(--ds-surface-hover); }
 button.reports-row { width: 100%; text-align: left; cursor: pointer; color: inherit; }
 button.reports-row:focus-visible { outline: 2px solid var(--ds-info); outline-offset: -2px; }
 .reports-row-content { min-width: 0; }
-.reports-row h3 { font-size: 17px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
-.reports-attributes :deep(.ds-attribute-tag) { font-size: 13px; padding: 4px 8px; }
-.reports-row-content > p { margin-top: 8px; color: var(--ds-text-muted); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.reports-row-value { display: grid; justify-items: end; gap: 8px; text-align: right; font-size: 18px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.reports-row h3 { font-size: 16px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+.reports-attributes :deep(.ds-attribute-tag) { font-size: 12px; padding: 2px 6px; }
+.reports-row-content > p { margin-top: 4px; color: var(--ds-text-muted); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.reports-row-value { display: grid; grid-template-columns: repeat(2, max-content); align-items: center; justify-items: end; gap: 6px 12px; text-align: right; font-size: 17px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.reports-row-value > :is(a, .ds-badge) { grid-column: 1 / -1; }
+.reports-row-cost { color: var(--ds-info); }
 .reports-panel > footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; min-height: 60px; margin-top: auto; padding: 10px 16px; font-size: 14px; color: var(--ds-text-muted); }
 .reports-panel > footer > div { display: flex; align-items: center; gap: 8px; }
 .reports-empty { padding: 32px 16px; text-align: center; color: var(--ds-text-muted); font-size: 13px; }
 .reports-note { font-size: 12px; color: var(--ds-text-muted); }
-.reports-ranking { width: min(1100px, 100%); max-height: calc(100dvh - 32px); box-shadow: var(--ds-shadow-panel); }
+.reports-ranking { width: min(1320px, 100%); max-height: calc(100dvh - 32px); box-shadow: var(--ds-shadow-panel); }
 .reports-ranking-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
 .reports-ranking-scroll { overflow: auto; min-height: 0; }
 .reports-ranking > footer { flex-shrink: 0; }
-.reports-ranking-table { min-width: 680px; }
-.reports-ranking-table td { padding: 12px 16px; font-variant-numeric: tabular-nums; }
+.reports-ranking-table { min-width: 1200px; }
+.reports-ranking-table td { padding: 8px 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
 .reports-ranking-position, .reports-ranking-unit { color: var(--ds-text-muted); }
-.reports-ranking-name { font-weight: 500; min-width: 180px; }
-.reports-ranking-table td:nth-last-child(-n+2) { white-space: nowrap; }
+.reports-ranking-name { font-weight: 500; min-width: 170px; }
+.reports-ranking-attributes { min-width: 300px; width: 30%; }
+.reports-ranking-attributes :deep(.ds-attribute-tag) { flex-shrink: 0; max-width: none; white-space: nowrap; font-size: 12px; padding: 2px 5px; }
+.reports-ranking > header { min-height: 64px; padding: 12px 16px; }
+.reports-ranking > footer { min-height: 44px; padding: 8px 16px; }
+.reports-ranking-table td:nth-last-child(-n+4) { white-space: nowrap; }
+.reports-ranking-actions .ds-button { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 @media (max-width: 900px) { .reports-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 480px) { .reports-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .reports-row { gap: 10px; } .reports-row-value { max-width: 100px; flex-shrink: 1; } .reports-period { width: 100%; } .reports-period-date { flex: 1 1 100%; } .reports-month { flex: 1; } .reports-period-date > .reports-year { flex: 1; } }
 </style>
