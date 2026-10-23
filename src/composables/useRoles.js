@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import * as api from '../services/api.js'
 import { formatRoleName } from './usePeople.js'
+import { roleNameKey } from '../utils/nameFormat.js'
 
 // Singleton state
 const roles = ref([])
@@ -28,7 +29,7 @@ export function useRoles() {
   async function addRole(name, description = '') {
     const trimmed = formatRoleName(name)
     if (!trimmed) return { ok: false, error: 'Nome obrigatório.' }
-    if (roles.value.some(r => r.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (roles.value.some(r => roleNameKey(r.name) === roleNameKey(trimmed))) {
       return { ok: false, error: 'Já existe um cargo com esse nome.' }
     }
     const created = await api.createRole({
@@ -47,7 +48,7 @@ export function useRoles() {
     if (changes.name !== undefined) {
       const trimmed = formatRoleName(changes.name)
       if (!trimmed) return { ok: false, error: 'Nome obrigatório.' }
-      if (roles.value.some(x => x.id !== id && x.name.toLowerCase() === trimmed.toLowerCase())) {
+      if (roles.value.some(x => x.id !== id && roleNameKey(x.name) === roleNameKey(trimmed))) {
         return { ok: false, error: 'Já existe um cargo com esse nome.' }
       }
     }

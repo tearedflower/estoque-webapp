@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import db from '../db.js'
 import { requireAdmin, requireAuth } from '../middleware/auth.js'
 import { queuePeopleRoleSync } from '../peopleRoleSync.js'
+import { roleNameKey } from '../../src/utils/nameFormat.js'
 
 const router = Router()
 
@@ -17,7 +18,7 @@ router.post('/', requireAuth, requireAdmin, (req, res) => {
   const { name, description, active } = req.body
   if (!name) return res.status(400).json({ error: 'Nome obrigatório' })
 
-  const dup = db.prepare('SELECT id FROM roles WHERE name = ?').get(name)
+  const dup = db.prepare('SELECT id, name FROM roles').all().find(role => roleNameKey(role.name) === roleNameKey(name))
   if (dup) return res.status(409).json({ error: 'Nome já existe' })
 
   const id = 'role_' + crypto.randomBytes(6).toString('hex')
@@ -36,7 +37,7 @@ router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   const { name, description, active } = req.body
   const nextName = String(name ?? current.name).trim()
   if (!nextName) return res.status(400).json({ error: 'Nome obrigatorio' })
-  const dup = db.prepare('SELECT id FROM roles WHERE lower(name) = lower(?) AND id != ?').get(nextName, req.params.id)
+  const dup = db.prepare('SELECT id, name FROM roles WHERE id != ?').all(req.params.id).find(role => roleNameKey(role.name) === roleNameKey(nextName))
   if (dup) return res.status(409).json({ error: 'Nome já existe' })
 
   const nextDescription = description !== undefined ? description || '' : current.description || ''

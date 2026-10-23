@@ -9,3 +9,7 @@ export function formatPersonName(value) {
 export function formatRoleName(value) {
   return formatPersonName(value)
 }
+
+export function roleNameKey(value) {
+  return formatRoleName(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR')
+}
