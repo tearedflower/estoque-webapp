@@ -47,7 +47,7 @@ const props = defineProps({
 })
 
 const {
-  items, variations, getVariationsForItem,
+  items, variations, getVariationsForItem, getTotalStock,
   uniqueGroups, getCategoriesForGroup, getSubcategoriesForCategory,
   activeGroup, activeCategory, activeSubcategory,
   setActiveGroup, setActiveCategory, setActiveSubcategory,
@@ -294,6 +294,7 @@ function applyTargetPrefill(prefill, tab) {
   itemSearch.value = ''
   applyRequestedByPrefill(prefill, tab)
   applyDestinationPrefill(prefill, tab)
+  if (Number.isSafeInteger(prefill.quantity) && prefill.quantity > 0) form.value.qty = String(prefill.quantity)
   if (target.item) {
     selectedItem.value = target.item
     step.value = 2
@@ -335,6 +336,7 @@ function applyMovementPrefill(prefill) {
   step.value = 3
   applyRequestedByPrefill(prefill, tab)
   applyDestinationPrefill(prefill, tab)
+  if (Number.isSafeInteger(prefill.quantity) && prefill.quantity > 0) form.value.qty = String(prefill.quantity)
   setViewingItem(item.id)
   nextTick(() => {
     suppressFlowReset.value = false

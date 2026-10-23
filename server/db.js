@@ -454,6 +454,9 @@ if (!epiRoleRuleCols.includes('days')) {
 if (!epiRoleRuleCols.includes('quantity')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1").run()
 }
+if (!epiRoleRuleCols.includes('usage_reason')) {
+  db.prepare("ALTER TABLE epi_role_rules ADD COLUMN usage_reason TEXT NOT NULL DEFAULT ''").run()
+}
 
 // Migration: add detailed OS fields if missing
 const workOrderCols = db.prepare("PRAGMA table_info(work_orders)").all().map(c => c.name)

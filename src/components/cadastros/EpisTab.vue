@@ -7,6 +7,8 @@ import { useToast } from '../../composables/useToast.js'
 import { normalizeSearchText } from '../../utils/globalSearch.js'
 import AttributeBadges from '../ui/AttributeBadges.vue'
 import AppDialog from '../ui/AppDialog.vue'
+import EpiGeneralControl from './EpiGeneralControl.vue'
+import EpiOverview from './EpiOverview.vue'
 
 const isLoggedIn = inject('isLoggedIn')
 const { items, variations } = useItems()
@@ -20,12 +22,17 @@ const {
 const { success, error } = useToast()
 
 const selectedRoleName = ref('')
+const view = ref('general')
+const showInactive = ref(false)
 const rolePickerOpen = ref(false)
 const roleSearch = ref('')
 const selectedRuleTarget = ref(null)
 const ruleDayDrafts = ref({})
 const ruleQuantityDrafts = ref({})
+const ruleReasonDrafts = ref({})
 const selectorOpen = ref(false)
+const editingRuleId = ref(null)
+const selectorSaving = ref(false)
 const selectorContext = ref('rule')
 const selectorSearch = ref('')
 const selectorScope = ref('levels')
@@ -253,16 +260,20 @@ function stockTotal(list) {
   return list.reduce((sum, item) => sum + itemStock(item), 0)
 }
 
-function openSelector(context) {
+function openSelector(context, rule = null) {
   selectorContext.value = context
   selectorSearch.value = ''
   selectorScope.value = 'levels'
-  modalSelectedTarget.value = selectedRuleTarget.value
+  editingRuleId.value = rule?.id || null
+  resetSelectorPath()
+  modalSelectedTarget.value = rule || selectedRuleTarget.value
   selectorOpen.value = true
 }
 
 function closeSelector() {
+  if (selectorSaving.value) return
   selectorOpen.value = false
+  editingRuleId.value = null
 }
 
 function setModalTarget(target) {
@@ -270,8 +281,20 @@ function setModalTarget(target) {
   modalSelectedTarget.value = target
 }
 
-function confirmSelector() {
-  if (!modalSelectedTarget.value) return
+async function confirmSelector() {
+  if (!modalSelectedTarget.value || selectorSaving.value) return
+  if (editingRuleId.value) {
+    selectorSaving.value = true
+    try {
+      const { targetType, targetKey, targetLabel } = modalSelectedTarget.value
+      const result = await editRoleRule(editingRuleId.value, { targetType, targetKey, targetLabel })
+      if (!result.ok) { error(result.error); return }
+      success('EPI do cargo alterado.')
+      selectorOpen.value = false
+      editingRuleId.value = null
+    } finally { selectorSaving.value = false }
+    return
+  }
   selectedRuleTarget.value = modalSelectedTarget.value
   selectorOpen.value = false
 }
@@ -328,10 +351,17 @@ function resetSelectorPath(level = 'root') {
   if (selectorScope.value === 'levels') setModalTarget(makeSubcategoryTarget(selectedGroup.value, selectedCategory.value, selectedSubcategory.value))
 }
 
-const rulesForRole = computed(() =>
-  roleRules.value.filter(rule => rule.roleName === selectedRoleName.value)
+const allRulesForRole = computed(() =>
+  roleRules.value.filter(rule => normalizeSearchText(rule.roleName) === normalizeSearchText(selectedRoleName.value))
 )
-const activeRuleCount = computed(() => rulesForRole.value.filter(rule => rule.active).length)
+const rulesForRole = computed(() => allRulesForRole.value.filter(rule => showInactive.value || rule.active))
+const activeRuleCount = computed(() => allRulesForRole.value.filter(rule => rule.active).length)
+const inactiveRuleCount = computed(() => allRulesForRole.value.filter(rule => !rule.active).length)
+
+function showRole(roleName) {
+  selectedRoleName.value = activeRoles.value.find(role => normalizeSearchText(role.name) === normalizeSearchText(roleName))?.name || roleName
+  view.value = 'role'
+}
 
 async function onAddRule() {
   if (!isLoggedIn?.value) return
@@ -356,10 +386,11 @@ async function onDeleteRule(rule) {
 async function onUpdateRule(rule) {
   const days = Number(ruleDayDrafts.value[rule.id] ?? rule.days)
   const quantity = Number(ruleQuantityDrafts.value[rule.id] ?? rule.quantity)
-  const result = await editRoleRule(rule.id, { days, quantity })
+  const result = await editRoleRule(rule.id, { days, quantity, usageReason: ruleReasonDrafts.value[rule.id] ?? rule.usageReason ?? '' })
   if (!result.ok) { error(result.error); return }
   ruleDayDrafts.value[rule.id] = result.rule.days
   ruleQuantityDrafts.value[rule.id] = result.rule.quantity
+  ruleReasonDrafts.value[rule.id] = result.rule.usageReason
   success('Regra do cargo atualizada.')
 }
 
@@ -385,11 +416,19 @@ function setRuleQuantityValue(rule, value) {
   <div class="ds-page-stack">
     <header class="ds-page-header">
       <div>
-        <h1 class="ds-page-title">Editar EPIs</h1>
-        <p class="ds-page-subtitle">Defina os equipamentos obrigatórios, a quantidade e a periodicidade por cargo. Use 0 para não controlar trocas.</p>
+        <h1 class="ds-page-title">Gestão de EPIs</h1>
+        <p class="ds-page-subtitle">Compare os prazos por equipamento e ajuste os vínculos de cada cargo.</p>
       </div>
     </header>
 
+    <nav class="flex flex-wrap gap-2" aria-label="Visões da gestão de EPIs">
+      <button v-for="option in [{ key: 'overview', label: 'Visão geral' }, { key: 'general', label: 'Controle geral' }, { key: 'role', label: 'Por cargo' }]" :key="option.key" type="button" class="min-h-10 rounded-lg border px-4 py-2 text-sm font-semibold" :class="view === option.key ? 'border-primary-600 bg-primary-600 text-[var(--ds-primary-text)]' : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'" :aria-pressed="view === option.key" @click="view = option.key">{{ option.label }}</button>
+    </nav>
+
+    <EpiGeneralControl v-if="view === 'general'" @open-role="showRole" />
+    <EpiOverview v-if="view === 'overview'" @open-role="showRole" />
+
+    <template v-if="view === 'role'">
     <section class="ds-panel p-4">
       <div class="grid gap-4 md:grid-cols-[minmax(16rem,24rem)_1fr] md:items-end">
         <div>
@@ -438,14 +477,15 @@ function setRuleQuantityValue(rule, value) {
             </div>
           </div>
         </div>
-        <p class="text-sm text-gray-500 dark:text-gray-400 md:pb-2">
+        <div class="text-sm text-gray-500 dark:text-gray-400 md:pb-2">
           <span class="font-semibold text-gray-900 dark:text-gray-100">{{ activeRuleCount }}</span>
           {{ activeRuleCount === 1 ? 'regra ativa' : 'regras ativas' }} para este cargo
-        </p>
+          <label v-if="inactiveRuleCount" class="mt-2 flex items-center gap-2 text-xs"><input v-model="showInactive" type="checkbox" /> Mostrar inativos ({{ inactiveRuleCount }})</label>
+        </div>
       </div>
     </section>
 
-    <section class="grid items-start gap-4 xl:grid-cols-[24rem_minmax(0,1fr)]">
+    <section class="grid items-start gap-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
       <aside class="ds-panel overflow-hidden">
         <div class="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
           <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Novo EPI obrigatório</h2>
@@ -484,6 +524,7 @@ function setRuleQuantityValue(rule, value) {
                 <AttributeBadges class="mt-1" :item="targetVariationRow(rule).item" :variation="targetVariationRow(rule).variation" compact />
               </template>
               <p v-else class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ readableTargetLabel(rule) }}</p>
+              <details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300">Motivo de uso</summary><label :for="`usage-reason-${rule.id}`" class="sr-only">Motivo de uso</label><textarea :id="`usage-reason-${rule.id}`" :value="ruleReasonDrafts[rule.id] ?? rule.usageReason ?? ''" rows="3" maxlength="2000" class="ds-input mt-2 w-full" placeholder="Motivo indicado no PGR para este cargo" @input="ruleReasonDrafts[rule.id] = $event.target.value"></textarea></details>
             </div>
             <div>
               <label class="ds-label">Quantidade</label>
@@ -511,6 +552,7 @@ function setRuleQuantityValue(rule, value) {
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-2 xl:justify-end">
+              <button type="button" class="min-h-9 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800" aria-haspopup="dialog" @click="openSelector('rule', rule)">Editar EPI</button>
               <button type="button" class="min-h-9 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700" @click="onUpdateRule(rule)">Atualizar</button>
               <button type="button" :aria-pressed="rule.active" class="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold" :class="rule.active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'" @click="onToggleRule(rule)">{{ rule.active ? 'Ativo' : 'Inativo' }}</button>
               <button type="button" class="min-h-9 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/30" @click="onDeleteRule(rule)">Excluir</button>
@@ -524,19 +566,23 @@ function setRuleQuantityValue(rule, value) {
       </div>
     </section>
 
+    </template>
+
     <AppDialog
         v-if="selectorOpen"
         visible
         aria-label="Selecionar EPI no catálogo"
+        :persistent="selectorSaving"
         @close="closeSelector"
       >
         <section class="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           <header class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 p-4 dark:border-gray-700">
             <div>
               <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                {{ selectorContext === 'rule' ? 'Selecionar EPI para cargo' : 'Selecionar EPI para periodicidade' }}
+                {{ editingRuleId ? 'Editar EPI do cargo' : selectorContext === 'rule' ? 'Selecionar EPI para cargo' : 'Selecionar EPI para periodicidade' }}
               </p>
-              <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Catálogo em blocos</h3>
+              <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingRuleId ? 'Alterar item vinculado' : 'Catálogo em blocos' }}</h3>
+              <p v-if="editingRuleId" class="mt-1 text-sm text-gray-500 dark:text-gray-400">Escolha outro EPI para esta regra. Quantidade, periodicidade e motivo de uso serão mantidos.</p>
             </div>
             <button
               type="button"
@@ -759,9 +805,9 @@ function setRuleQuantityValue(rule, value) {
             <button
               type="button"
               class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-700 dark:disabled:bg-gray-700 dark:disabled:text-gray-300"
-              :disabled="!modalSelectedTarget"
+              :disabled="!modalSelectedTarget || selectorSaving"
               @click="confirmSelector"
-            >Usar seleção</button>
+            >{{ selectorSaving ? 'Salvando...' : editingRuleId ? 'Salvar EPI' : 'Usar seleção' }}</button>
           </footer>
         </section>
     </AppDialog>

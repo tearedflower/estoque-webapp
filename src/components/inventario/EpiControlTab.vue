@@ -6,6 +6,7 @@ import { useMovements } from '../../composables/useMovements.js'
 import { useEpis } from '../../composables/useEpis.js'
 import { useToast } from '../../composables/useToast.js'
 import { catalogRowsForTarget, movementPersonMatches } from '../../utils/epiSheet.js'
+import { epiControlCsv } from '../../utils/epiControlCsv.js'
 import AttributeBadges from '../ui/AttributeBadges.vue'
 import AppDialog from '../ui/AppDialog.vue'
 import AppButton from '../ui/AppButton.vue'
@@ -27,6 +28,8 @@ const personStatusFilter = ref('ativo')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const historyRecord = ref(null)
+const compatibleRecord = ref(null)
+const compatibleRows = computed(() => compatibleRecord.value ? targetRows(compatibleRecord.value.rule) : [])
 const editingHistoryMovement = ref(null)
 const historyEditForm = ref({ qty: '', date: '', docRef: '', note: '' })
 const historyEditSaving = ref(false)
@@ -267,6 +270,19 @@ const paginatedRecords = computed(() => {
   return filteredRecords.value.slice(start, start + pageSize.value)
 })
 
+function exportControlCsv() {
+  if (!filteredRecords.value.length) return
+  const records = filteredRecords.value.map(record => ({ ...record, ...targetVariationRow(record.rule) }))
+  const url = URL.createObjectURL(new Blob([epiControlCsv(records)], { type: 'text/csv;charset=utf-8;' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `controle_epis_${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 function historyRowsForRecord(record) {
   if (!record) return []
   const target = targetFromRule(record.rule)
@@ -363,6 +379,7 @@ function quickMovement(record) {
     targetType: record.rule.targetType,
     targetKey: record.rule.targetKey,
     targetLabel: record.rule.targetLabel,
+    quantity: Number(record.rule.quantity || 1),
     requestedBy: record.person.name,
     requestedByPersonId: record.person.id,
     destination: 'EPI',
@@ -375,19 +392,13 @@ function recordKey(record) {
   return `${record.person.id}:${record.rule.id}`
 }
 
-const attentionRecords = computed(() => records.value.filter(record =>
-  ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status)
-))
-
 const selectedRecords = computed(() => {
   const keys = new Set(selectedRecordKeys.value)
-  return attentionRecords.value.filter(record => keys.has(recordKey(record)))
+  return records.value.filter(record => keys.has(recordKey(record)))
 })
 
-const allVisibleAttentionSelected = computed(() => {
-  const visible = filteredRecords.value.filter(record =>
-    ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status)
-  )
+const allVisibleSelected = computed(() => {
+  const visible = filteredRecords.value
   return visible.length > 0 && visible.every(record => selectedRecordKeys.value.includes(recordKey(record)))
 })
 
@@ -398,11 +409,9 @@ function toggleRecord(record) {
     : [...selectedRecordKeys.value, key]
 }
 
-function toggleVisibleAttention() {
-  const visibleKeys = filteredRecords.value
-    .filter(record => ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status))
-    .map(recordKey)
-  if (allVisibleAttentionSelected.value) {
+function toggleVisibleRecords() {
+  const visibleKeys = filteredRecords.value.map(recordKey)
+  if (allVisibleSelected.value) {
     selectedRecordKeys.value = selectedRecordKeys.value.filter(key => !visibleKeys.includes(key))
     return
   }
@@ -487,85 +496,46 @@ async function submitBulkDelivery() {
 </script>
 
 <template>
-  <section class="space-y-4">
-    <header class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-      <div class="ds-page-header">
-        <div>
-          <h1 class="ds-page-title">Controle de EPIs</h1>
-          <p class="ds-page-subtitle">Entregas, trocas e vencimentos por pessoa.</p>
-        </div>
+  <section class="epi-control space-y-4">
+    <header class="epi-control-header">
+      <div>
+        <h1 class="ds-page-title">Controle de EPIs</h1>
+        <p class="ds-page-subtitle">Entregas, trocas e vencimentos por pessoa.</p>
       </div>
-      <div class="flex w-full flex-col gap-2 sm:flex-row md:w-auto">
-        <AppButton
-          v-if="canOperate"
-          variant="ghost"
-          :disabled="!filteredRecords.some(record => ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status))"
-          :aria-pressed="allVisibleAttentionSelected"
-          @click="toggleVisibleAttention"
-        >
-          {{ allVisibleAttentionSelected ? 'Limpar resultados' : 'Selecionar resultados' }}
-        </AppButton>
-        <AppButton
-          v-if="canOperate"
-          variant="secondary"
-          :disabled="!selectedRecords.length"
-          @click="openBulkDelivery"
-        >
-          Registrar reposições
-          <span v-if="selectedRecords.length" class="rounded-full bg-primary-100 px-2 py-0.5 text-xs text-primary-700 dark:bg-primary-900/50 dark:text-primary-200">
-            {{ selectedRecords.length }}
-          </span>
-        </AppButton>
-        <button type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700" @click="sheetOpen = true">
-          Ficha de EPI
-        </button>
-        <input
-          v-model="search"
-          type="search"
-          placeholder="Buscar pessoa, cargo ou EPI..."
-          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-primary-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 md:w-80"
-        />
+      <div class="epi-control-actions">
+        <AppButton variant="secondary" :disabled="!filteredRecords.length" title="Exportar todos os resultados da busca e dos filtros, incluindo outras páginas" @click="exportControlCsv">Exportar CSV</AppButton>
+        <AppButton variant="primary" @click="sheetOpen = true">Ficha de EPI</AppButton>
       </div>
     </header>
 
-    <div class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-      <div class="grid gap-3 border-b border-gray-200 bg-gray-50/60 p-3 dark:border-gray-700 dark:bg-gray-800/30 xl:grid-cols-[minmax(0,1fr)_auto]">
-        <div class="min-w-0">
-          <p class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Situação do EPI</p>
-          <div class="flex min-h-10 min-w-0 items-center gap-1 overflow-x-auto rounded-lg border border-gray-300 bg-white p-1 dark:border-gray-600 dark:bg-gray-700">
-            <button
-              v-for="tab in filterTabs"
-              :key="tab.id"
-              type="button"
-              class="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors"
-              :class="statusFilterActive(tab.id)
-                ? 'bg-primary-600 text-[var(--ds-primary-text)]'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-gray-100'"
-              :aria-pressed="statusFilterActive(tab.id)"
-              @click="toggleStatusFilter(tab.id)"
-            >
-              {{ tab.label }} <span class="tabular-nums opacity-70">({{ tab.count }})</span>
-            </button>
-          </div>
+    <div class="epi-control-panel overflow-hidden">
+      <div class="epi-control-toolbar">
+        <div class="ds-query-bar epi-control-search" role="search" aria-label="Pesquisar controle de EPIs">
+          <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path stroke-linecap="round" d="m16 16 4 4" /></svg>
+          <input v-model="search" type="search" class="ds-query-input" aria-label="Buscar pessoa, cargo ou EPI" placeholder="Buscar pessoa, cargo ou EPI..." />
         </div>
-        <div class="min-w-0">
-          <p class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Situação da pessoa</p>
-          <div class="flex min-h-10 min-w-0 items-center gap-1 overflow-x-auto rounded-lg border border-gray-300 bg-white p-1 dark:border-gray-600 dark:bg-gray-700">
-            <button
-              v-for="tab in personStatusTabs"
-              :key="tab.id"
-              type="button"
-              class="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors"
-              :class="personStatusFilter === tab.id
-                ? 'bg-primary-600 text-[var(--ds-primary-text)]'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-gray-100'"
-              :aria-pressed="personStatusFilter === tab.id"
-              @click="personStatusFilter = tab.id"
-            >
-              {{ tab.label }}
-            </button>
-          </div>
+        <label class="epi-control-person-filter">
+          <span>Pessoas</span>
+          <select v-model="personStatusFilter" class="ds-input" aria-label="Situação da pessoa">
+            <option v-for="tab in personStatusTabs" :key="tab.id" :value="tab.id">{{ tab.label }}</option>
+          </select>
+        </label>
+        <div v-if="canOperate" class="epi-control-selection">
+          <AppButton variant="ghost" size="sm"
+            :disabled="!filteredRecords.length"
+            :aria-pressed="allVisibleSelected" @click="toggleVisibleRecords">
+            {{ allVisibleSelected ? 'Limpar seleção' : 'Selecionar resultados' }}
+          </AppButton>
+          <AppButton v-if="selectedRecords.length" variant="primary" size="sm" @click="openBulkDelivery">
+            Registrar reposições ({{ selectedRecords.length }})
+          </AppButton>
         </div>
+      </div>
+      <div class="epi-control-status" role="group" aria-label="Situação do EPI">
+        <button v-for="tab in filterTabs" :key="tab.id" type="button"
+          :aria-pressed="statusFilterActive(tab.id)" @click="toggleStatusFilter(tab.id)">
+          {{ tab.label }} <span>{{ tab.count }}</span>
+        </button>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full min-w-[780px] text-sm">
@@ -573,13 +543,14 @@ async function submitBulkDelivery() {
             <tr class="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
               <th class="px-3 py-2 text-left font-semibold">Pessoa</th>
               <th class="px-3 py-2 text-left font-semibold">EPI e periodicidade</th>
+              <th class="px-3 py-2 text-left font-semibold">Motivo de uso</th>
               <th class="px-3 py-2 text-left font-semibold">Situação</th>
-              <th class="px-3 py-2 text-right font-semibold">Ações</th>
+              <th class="w-px whitespace-nowrap px-3 py-2 text-center font-semibold">Ações</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
             <tr v-if="!filteredRecords.length">
-              <td colspan="4" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+              <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
                 Nenhum EPI encontrado para os filtros selecionados.
               </td>
             </tr>
@@ -607,6 +578,9 @@ async function submitBulkDelivery() {
                 </p>
               </td>
               <td class="px-3 py-2">
+                <p class="max-w-xs whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">{{ record.rule.usageReason || 'Não informado' }}</p>
+              </td>
+              <td class="px-3 py-2">
                 <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="statusConfig[record.status].pill">
                   {{ statusConfig[record.status].label }}
                 </span>
@@ -617,22 +591,8 @@ async function submitBulkDelivery() {
               </td>
               <td class="px-3 py-2 text-right">
                 <div class="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
-                  <button
-                    v-if="canOperate && ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status)"
-                    type="button"
-                    class="inline-flex h-9 items-center gap-1 rounded-md border px-2.5 text-xs font-semibold transition-colors"
-                    :class="selectedRecordKeys.includes(recordKey(record))
-                      ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
-                      : 'border-gray-200 text-gray-600 hover:border-primary-400 hover:text-primary-700 dark:border-gray-700 dark:text-gray-300 dark:hover:text-primary-300'"
-                    :aria-pressed="selectedRecordKeys.includes(recordKey(record))"
-                    @click="toggleRecord(record)"
-                  >
-                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="9" />
-                      <path v-if="selectedRecordKeys.includes(recordKey(record))" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.25 2.25L15.5 9.5" />
-                    </svg>
-                    {{ selectedRecordKeys.includes(recordKey(record)) ? 'Selecionado' : 'Selecionar' }}
-                  </button>
+
+                  <button type="button" class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer" aria-haspopup="dialog" @click="compatibleRecord = record">Itens compatíveis</button>
                   <button
                     type="button"
                     class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer"
@@ -647,6 +607,23 @@ async function submitBulkDelivery() {
                     @click="quickMovement(record)"
                   >
                     Registrar saida
+                  </button>
+                  <button
+                    v-if="canOperate"
+                    type="button"
+                    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-xs font-semibold transition-colors"
+                    :class="selectedRecordKeys.includes(recordKey(record))
+                      ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
+                      : 'border-gray-200 text-gray-600 hover:border-primary-400 hover:text-primary-700 dark:border-gray-700 dark:text-gray-300 dark:hover:text-primary-300'"
+                    :aria-pressed="selectedRecordKeys.includes(recordKey(record))"
+                    :aria-label="`${selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar' : 'Selecionar'} reposição de ${readableTargetLabel(record.rule)} para ${record.person.name}`"
+                    :title="selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar reposição' : 'Selecionar reposição'"
+                    @click="toggleRecord(record)"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path v-if="selectedRecordKeys.includes(recordKey(record))" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.25 2.25L15.5 9.5" />
+                    </svg>
                   </button>
                 </div>
               </td>
@@ -674,6 +651,23 @@ async function submitBulkDelivery() {
         </div>
       </div>
     </div>
+
+    <AppDialog v-if="compatibleRecord" visible aria-label="Itens compatíveis com o EPI" @close="compatibleRecord = null">
+      <section class="ds-panel flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden">
+        <header class="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+          <div class="min-w-0"><h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Itens compatíveis</h2><p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{{ readableTargetLabel(compatibleRecord.rule) }} · {{ compatibleRecord.person.name }}</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Variações do catálogo que atendem ao vínculo cadastrado · {{ compatibleRecord.rule.quantity }} por entrega</p></div>
+          <button type="button" class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800" aria-label="Fechar itens compatíveis" @click="compatibleRecord = null">✕</button>
+        </header>
+        <div class="min-h-0 overflow-y-auto px-5">
+          <p v-if="!compatibleRows.length" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">Nenhuma variação ativa encontrada para este vínculo.</p>
+          <article v-for="{ item, variation } in compatibleRows" :key="variation.id" class="flex items-center justify-between gap-4 border-b border-gray-200 py-4 last:border-b-0 dark:border-gray-700">
+            <div class="min-w-0"><h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ item.name }}</h3><AttributeBadges class="mt-2" :item="item" :variation="variation" compact /></div>
+            <div class="shrink-0 text-right"><p class="text-xs text-gray-500 dark:text-gray-400">Estoque</p><p class="mt-1 text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ variation.stockConfirmed === false ? 'A confirmar' : `${variation.stock} ${item.unit}` }}</p></div>
+          </article>
+        </div>
+        <footer class="border-t border-gray-200 px-5 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">{{ compatibleRows.length }} {{ compatibleRows.length === 1 ? 'variação' : 'variações' }}</footer>
+      </section>
+    </AppDialog>
 
     <AppDialog
       :visible="bulkOpen"
@@ -859,3 +853,29 @@ async function submitBulkDelivery() {
     <EpiSheetDialog v-if="sheetOpen" :can-operate="canOperate" @close="sheetOpen = false" />
   </section>
 </template>
+
+<style scoped>
+.epi-control-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.epi-control-actions, .epi-control-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.epi-control-panel { border: 1px solid var(--ds-border); border-radius: var(--ds-radius-card); background: var(--ds-panel); }
+.epi-control-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px 16px 12px; }
+.epi-control-search { flex: 1 1 300px; min-width: 0; margin: 0; color: var(--ds-text-muted); }
+.epi-control-person-filter { display: flex; align-items: center; gap: 8px; color: var(--ds-text-muted); font-size: 13px; }
+.epi-control-person-filter select { width: 150px; min-height: 40px; }
+.epi-control-status { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; border-bottom: 1px solid var(--ds-border-subtle); }
+.epi-control-status button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--ds-border); border-radius: 6px; color: var(--ds-text-soft); font-size: 13px; font-weight: 600; cursor: pointer; }
+.epi-control-status button span { font-size: 12px; font-variant-numeric: tabular-nums; opacity: .8; }
+.epi-control-status button:hover { background: var(--ds-surface-hover); }
+.epi-control-status button[aria-pressed="true"] { border-color: var(--ds-brand); background: var(--ds-brand); color: var(--ds-primary-text); }
+.epi-control-status button:focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: 2px; }
+@media (max-width: 640px) {
+  .epi-control-actions { width: 100%; }
+  .epi-control-actions > * { flex: 1; }
+  .epi-control-toolbar { gap: 10px; padding: 12px; }
+  .epi-control-search { flex-basis: 100%; }
+  .epi-control-person-filter { flex: 1; }
+  .epi-control-person-filter select { flex: 1; width: auto; }
+  .epi-control-selection { flex-basis: 100%; }
+  .epi-control-status { padding: 0 12px 12px; }
+}
+</style>

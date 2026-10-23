@@ -358,6 +358,10 @@ export async function updateEpiRoleRule(id, data) {
   return request(`/epis/role-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
+export async function updateEpiRoleBatch(changes) {
+  return request('/epis/role-rules/batch', { method: 'PUT', body: JSON.stringify({ changes }) })
+}
+
 export async function deleteEpiRoleRule(id) {
   return request(`/epis/role-rules/${id}`, { method: 'DELETE' })
 }

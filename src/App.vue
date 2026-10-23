@@ -162,7 +162,7 @@ const navigationGroups = [
     icon: 'M9 12.75 11.25 15 15 9.75m5.25-3.735A11.96 11.96 0 0 1 12 3c-2.755 0-5.3.93-7.33 2.494-.54.416-.83 1.075-.745 1.752.516 4.135 2.56 7.75 5.535 10.303L12 19.5l2.54-1.951c2.976-2.554 5.02-6.168 5.535-10.303a1.823 1.823 0 0 0-.745-1.752Z',
     tabs: [
       { id: 'epi-control', label: 'Controle de EPIs', target: { tab: 'inventario', section: 'epis', requiresAuth: true } },
-      { id: 'epis-admin', label: 'Editar EPIs', target: { tab: 'epis-admin', requiresAdmin: true }, requiresAdmin: true },
+      { id: 'epis-admin', label: 'Gestão de EPIs', target: { tab: 'epis-admin', requiresAdmin: true }, requiresAdmin: true },
     ],
   },
   {

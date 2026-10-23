@@ -24,6 +24,7 @@ function toRule(row) {
     targetLabel: row.target_label || '',
     days: Number(row.days ?? 30),
     quantity: Number(row.quantity || 1),
+    usageReason: row.usage_reason || '',
     active: !!row.active,
   }
 }
@@ -53,6 +54,8 @@ router.post('/role-rules', requireAuth, requireAdmin, (req, res) => {
   if (!Number.isInteger(days) || days < 0) return res.status(400).json({ error: 'Periodicidade deve ser zero ou maior.' })
   const quantity = Number(req.body.quantity ?? 1)
   if (!Number.isInteger(quantity) || quantity <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' })
+  const usageReason = req.body.usageReason ?? ''
+  if (typeof usageReason !== 'string' || usageReason.length > 2000) return res.status(400).json({ error: 'Motivo de uso deve ser um texto de até 2000 caracteres.' })
 
   const dup = db.prepare(`
     SELECT id FROM epi_role_rules
@@ -62,11 +65,48 @@ router.post('/role-rules', requireAuth, requireAdmin, (req, res) => {
 
   const id = 'epi_rule_' + crypto.randomBytes(6).toString('hex')
   db.prepare(`
-    INSERT INTO epi_role_rules (id, role_name, target_type, target_key, target_label, days, quantity, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, roleName, target.targetType, target.targetKey, target.targetLabel, days, quantity, req.body.active !== false ? 1 : 0)
+    INSERT INTO epi_role_rules (id, role_name, target_type, target_key, target_label, days, quantity, active, usage_reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, roleName, target.targetType, target.targetKey, target.targetLabel, days, quantity, req.body.active !== false ? 1 : 0, usageReason.trim())
 
-  res.json({ id, roleName, ...target, days, quantity, active: req.body.active !== false })
+  res.json({ id, roleName, ...target, days, quantity, usageReason: usageReason.trim(), active: req.body.active !== false })
+})
+
+router.put(['/role-rules/periods', '/role-rules/batch'], requireAuth, requireAdmin, (req, res) => {
+  const changes = req.body.changes
+  const fields = ['days', 'quantity', 'active']
+  const valid = (key, value) => key === 'active' ? typeof value === 'boolean' : Number.isSafeInteger(value) && value >= (key === 'quantity' ? 1 : 0)
+  if (!Array.isArray(changes) || !changes.length || changes.length > 10000 || changes.some(row =>
+    !row || typeof row.id !== 'string' || !row.id.trim() ||
+    !fields.some(key => Object.hasOwn(row, key)) ||
+    Object.keys(row).some(key => !['id', 'days', 'previousDays', 'quantity', 'previousQuantity', 'active', 'previousActive'].includes(key)) ||
+    fields.some(key => {
+      const previous = `previous${key[0].toUpperCase()}${key.slice(1)}`
+      return (Object.hasOwn(row, key) || Object.hasOwn(row, previous)) && (!valid(key, row[key]) || !valid(key, row[previous]))
+    })
+  ) || new Set(changes.map(row => row.id)).size !== changes.length) {
+    return res.status(400).json({ error: 'Informe vínculos únicos, prazos inteiros de zero ou mais dias e quantidades inteiras maiores que zero.' })
+  }
+  try {
+    const updated = db.transaction(() => {
+      const find = db.prepare('SELECT * FROM epi_role_rules WHERE id = ?')
+      const update = db.prepare('UPDATE epi_role_rules SET days = ?, quantity = ?, active = ? WHERE id = ?')
+      return changes.map(change => {
+        const current = find.get(change.id)
+        if (!current || (!current.active && change.active !== true) || fields.some(key => Object.hasOwn(change, key) &&
+          (key === 'active' ? !!current[key] : current[key]) !== change[`previous${key[0].toUpperCase()}${key.slice(1)}`])) {
+          throw Object.assign(new Error('Um vínculo mudou desde a revisão. Recarregue os dados e tente novamente.'), { status: 409 })
+        }
+        const next = { ...current, days: change.days ?? current.days, quantity: change.quantity ?? current.quantity, active: change.active === undefined ? current.active : Number(change.active) }
+        update.run(next.days, next.quantity, next.active, change.id)
+        return toRule(next)
+      })
+    }).immediate()
+    res.json(updated)
+  } catch (cause) {
+    if (cause.status === 409) return res.status(409).json({ error: cause.message })
+    throw cause
+  }
 })
 
 router.put('/role-rules/:id', requireAuth, requireAdmin, (req, res) => {
@@ -84,6 +124,8 @@ router.put('/role-rules/:id', requireAuth, requireAdmin, (req, res) => {
   if (!Number.isInteger(days) || days < 0) return res.status(400).json({ error: 'Periodicidade deve ser zero ou maior.' })
   const quantity = req.body.quantity !== undefined ? Number(req.body.quantity) : Number(current.quantity || 1)
   if (!Number.isInteger(quantity) || quantity <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' })
+  const usageReason = req.body.usageReason !== undefined ? req.body.usageReason : current.usage_reason || ''
+  if (typeof usageReason !== 'string' || usageReason.length > 2000) return res.status(400).json({ error: 'Motivo de uso deve ser um texto de até 2000 caracteres.' })
 
   const dup = db.prepare(`
     SELECT id FROM epi_role_rules
@@ -92,10 +134,10 @@ router.put('/role-rules/:id', requireAuth, requireAdmin, (req, res) => {
   if (dup) return res.status(409).json({ error: 'Este EPI ja esta vinculado ao cargo.' })
 
   db.prepare(`
-    UPDATE epi_role_rules SET role_name=?, target_type=?, target_key=?, target_label=?, days=?, quantity=?, active=? WHERE id=?
-  `).run(roleName, target.targetType, target.targetKey, target.targetLabel, days, quantity, req.body.active !== false ? 1 : 0, req.params.id)
+    UPDATE epi_role_rules SET role_name=?, target_type=?, target_key=?, target_label=?, days=?, quantity=?, active=?, usage_reason=? WHERE id=?
+  `).run(roleName, target.targetType, target.targetKey, target.targetLabel, days, quantity, req.body.active !== false ? 1 : 0, usageReason.trim(), req.params.id)
 
-  res.json({ id: req.params.id, roleName, ...target, days, quantity, active: req.body.active !== false })
+  res.json({ id: req.params.id, roleName, ...target, days, quantity, usageReason: usageReason.trim(), active: req.body.active !== false })
 })
 
 router.delete('/role-rules/:id', requireAuth, requireAdmin, (req, res) => {

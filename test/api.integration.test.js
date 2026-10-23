@@ -50,7 +50,7 @@ function sessionToken(response) {
   return decodeURIComponent(match[1])
 }
 
-test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout: 20_000 }, async t => {
+async function startTestServer(t) {
   const tempDir = await mkdtemp(join(os.tmpdir(), 'estoque-api-'))
   const dbPath = join(tempDir, 'test.db')
   const port = await freePort()
@@ -84,6 +84,99 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   })
 
   await waitForServer(url, child, () => output)
+  return { url, dbPath }
+}
+
+test('cargos ignoram acentos e motivo de uso do EPI persiste sem alterar prazo', { timeout: 20_000 }, async t => {
+  const { url } = await startTestServer(t)
+  const login = await jsonRequest(url, '/api/auth/login', { body: { login: 'admin', pin: 'admin123' } })
+  assert.equal(login.response.status, 200)
+  const token = sessionToken(login.response)
+  assert.equal((await jsonRequest(url, '/api/auth/users/user_admin', { token, method: 'PUT', body: { pin: 'senha-local-123' } })).response.status, 200)
+  const role = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Junior' } })
+  assert.equal(role.response.status, 200)
+  assert.equal((await jsonRequest(url, '/api/roles', { token, body: { name: '  MECANICO  JUNIOR ' } })).response.status, 409)
+  const other = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Pleno' } })
+  assert.equal((await jsonRequest(url, `/api/roles/${other.data.id}`, { token, method: 'PUT', body: { name: 'Mecanico Junior' } })).response.status, 409)
+  const rule = await jsonRequest(url, '/api/epis/role-rules', { token, body: {
+    roleName: 'Mecânico Junior', targetType: 'item', targetKey: 'test-item', days: 0, quantity: 4, usageReason: '  Motivo do PGR  ',
+  } })
+  assert.equal(rule.response.status, 200)
+  assert.equal(rule.data.usageReason, 'Motivo do PGR')
+  const update = body => jsonRequest(url, `/api/epis/role-rules/${rule.data.id}`, { token, method: 'PUT', body })
+  const changed = await update({ usageReason: 'Risco descrito no PGR' })
+  assert.equal(changed.response.status, 200)
+  assert.equal(changed.data.days, 0)
+  assert.equal(changed.data.quantity, 4)
+  assert.equal((await update({ usageReason: {} })).response.status, 400)
+  assert.equal((await update({ usageReason: 'x'.repeat(2001) })).response.status, 400)
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules')).data.find(row => row.id === rule.data.id).usageReason, 'Risco descrito no PGR')
+  assert.equal((await update({ active: false })).data.usageReason, 'Risco descrito no PGR')
+})
+
+test('periodicidades em lote exigem admin, preservam motivos e cancelam tudo em conflito', { timeout: 20_000 }, async t => {
+  const { url } = await startTestServer(t)
+  const login = await jsonRequest(url, '/api/auth/login', { body: { login: 'admin', pin: 'admin123' } })
+  const token = sessionToken(login.response)
+  assert.equal((await jsonRequest(url, '/api/auth/users/user_admin', { token, method: 'PUT', body: { pin: 'senha-local-123' } })).response.status, 200)
+  const create = (roleName, days, active = true) => jsonRequest(url, '/api/epis/role-rules', { token, body: {
+    roleName, days, active, targetType: 'item', targetKey: 'test-item', targetLabel: 'Luva', quantity: 2, usageReason: `Motivo ${roleName}`,
+  } })
+  const first = (await create('Mecânico', 30)).data
+  const second = (await create('Operador', 90)).data
+  const inactive = (await create('Inativo', 15, false)).data
+  const list = async () => (await jsonRequest(url, '/api/epis/role-rules')).data
+  const before = await list()
+  const change = (rule, days, previousDays = rule.days) => ({ id: rule.id, days, previousDays })
+  const batch = changes => jsonRequest(url, '/api/epis/role-rules/periods', { token, method: 'PUT', body: { changes } })
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules/periods', { method: 'PUT', body: { changes: [change(first, 60)] } })).response.status, 401)
+  const visitor = await jsonRequest(url, '/api/auth/users', { token, body: { name: 'Visitante', username: 'visitante', role: 'visitante', pin: 'visitante-inicial-123' } })
+  const visitorLogin = await jsonRequest(url, '/api/auth/login', { body: { login: 'visitante', pin: 'visitante-inicial-123' } })
+  const visitorToken = sessionToken(visitorLogin.response)
+  await jsonRequest(url, `/api/auth/users/${visitor.data.id}`, { token: visitorToken, method: 'PUT', body: { pin: 'visitante-seguro-456' } })
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules/periods', { token: visitorToken, method: 'PUT', body: { changes: [change(first, 60)] } })).response.status, 403)
+  assert.equal((await batch([change(first, 60), change(second, 60, 30)])).response.status, 409)
+  assert.deepEqual(await list(), before)
+  assert.equal((await batch([change(first, 60), change(inactive, 60)])).response.status, 409)
+  assert.deepEqual(await list(), before)
+  for (const changes of [[], [change(first, -1)], [change(first, 1.5)], [change(first, null)], [change(first, 60), change(first, 90)]]) {
+    assert.equal((await batch(changes)).response.status, 400)
+  }
+  const saved = await batch([change(first, 60), change(second, 60)])
+  assert.equal(saved.response.status, 200)
+  assert.deepEqual(await list(), before.map(rule => ({ ...rule, days: rule.active ? 60 : rule.days })))
+  assert.equal((await batch([change(first, 0, 60), change(second, 0, 60)])).response.status, 200)
+  assert.ok((await list()).filter(rule => rule.active).every(rule => rule.days === 0))
+  const batchSettings = changes => jsonRequest(url, '/api/epis/role-rules/batch', { token, method: 'PUT', body: { changes } })
+  const quantityChange = rule => ({ id: rule.id, quantity: 3, previousQuantity: 2 })
+  const snapshot = await list()
+  for (const changes of [
+    [{ id: first.id, quantity: 0, previousQuantity: 2 }],
+    [{ id: first.id, quantity: 1.5, previousQuantity: 2 }],
+    [{ id: first.id, quantity: 3 }],
+    [{ id: first.id, active: 'false', previousActive: true }],
+    [{ id: first.id, previousQuantity: 2 }],
+    [{ ...quantityChange(first), unexpected: 'ignored?' }],
+  ]) assert.equal((await batchSettings(changes)).response.status, 400)
+  assert.equal((await batchSettings([quantityChange(first), { ...quantityChange(second), previousQuantity: 1 }])).response.status, 409)
+  assert.deepEqual(await list(), snapshot)
+  assert.equal((await batchSettings([quantityChange(first), quantityChange(second)])).response.status, 200)
+  assert.deepEqual(await list(), snapshot.map(rule => rule.active ? { ...rule, quantity: 3 } : rule))
+  const beforeInactivation = await list()
+  const deactivate = rule => ({ id: rule.id, active: false, previousActive: true })
+  assert.equal((await batchSettings([deactivate(first), deactivate(inactive)])).response.status, 409)
+  assert.deepEqual(await list(), beforeInactivation)
+  assert.equal((await batchSettings([deactivate(first), deactivate(second)])).response.status, 200)
+  assert.deepEqual(await list(), beforeInactivation.map(rule => ({ ...rule, active: false })))
+  const reactivate = rule => ({ id: rule.id, active: true, previousActive: false })
+  assert.equal((await batchSettings([reactivate(first), { ...reactivate(second), previousActive: true }])).response.status, 409)
+  assert.deepEqual(await list(), beforeInactivation.map(rule => ({ ...rule, active: false })))
+  assert.equal((await batchSettings([reactivate(first), reactivate(second)])).response.status, 200)
+  assert.deepEqual(await list(), beforeInactivation)
+})
+
+test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout: 20_000 }, async t => {
+  const { url, dbPath } = await startTestServer(t)
 
   const health = await fetch(`${url}/api/health`, { headers: { origin: 'http://localhost:5173' } })
   assert.equal(health.status, 200)
@@ -368,6 +461,10 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { name: 'Operador Teste' },
   })
   assert.equal(role.response.status, 200)
+  const accentedRole = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Junior' } })
+  assert.equal(accentedRole.response.status, 200)
+  assert.equal((await jsonRequest(url, '/api/roles', { token, body: { name: '  MECANICO  JUNIOR ' } })).response.status, 409)
+  assert.equal((await jsonRequest(url, `/api/roles/${role.data.id}`, { token, method: 'PUT', body: { name: 'Mecanico Junior' } })).response.status, 409)
 
   const person = await jsonRequest(url, '/api/people', {
     token,
@@ -580,14 +677,28 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
       targetLabel: 'Mascara de teste',
       days: 0,
       quantity: 4,
+      usageReason: '  Motivo do PGR para este cargo  ',
     },
   })
   assert.equal(epiRule.response.status, 200)
   assert.equal(epiRule.data.quantity, 4)
   assert.equal(epiRule.data.days, 0)
+  assert.equal(epiRule.data.usageReason, 'Motivo do PGR para este cargo')
+  const changedReason = await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { usageReason: 'Motivo atualizado' },
+  })
+  assert.equal(changedReason.response.status, 200)
+  assert.equal(changedReason.data.days, 0)
+  assert.equal(changedReason.data.quantity, 4)
+  assert.equal(changedReason.data.usageReason, 'Motivo atualizado')
+  const invalidReason = await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { usageReason: { invalid: true } },
+  })
+  assert.equal(invalidReason.response.status, 400)
   const epiRules = await jsonRequest(url, '/api/epis/role-rules')
   assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).quantity, 4)
   assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).days, 0)
+  assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).usageReason, 'Motivo atualizado')
 
   const epiLine = {
     itemId: epiItem.data.id,
