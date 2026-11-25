@@ -10,6 +10,8 @@ import { normalizeSearchText } from '../../utils/globalSearch.js'
 import {
   buildCatalogEpiSheetRow,
   buildEpiKitRows,
+  epiRuleMatchesPerson,
+  targetMatchesCatalogRow,
   buildEpiSheetRows,
   catalogRowsForTarget,
 } from '../../utils/epiSheet.js'
@@ -57,11 +59,9 @@ const selectedPerson = computed(() =>
   people.value.find(person => person.id === selectedPersonId.value) || null
 )
 
-const selectedPersonRules = computed(() => {
-  const role = normalizeSearchText(selectedPerson.value?.role)
-  if (!role) return []
-  return activeRoleRules.value.filter(rule => normalizeSearchText(rule.roleName) === role)
-})
+const selectedPersonRules = computed(() =>
+  activeRoleRules.value.filter(rule => epiRuleMatchesPerson(rule, selectedPerson.value))
+)
 
 const historyRows = computed(() => buildEpiSheetRows(movements.value, selectedPerson.value))
 
@@ -86,11 +86,15 @@ const draftSheetRows = computed(() => draftRows.value.map(row => {
   })
 }))
 
-const printableRows = computed(() =>
-  mode.value === 'history' ? historyRows.value : draftSheetRows.value
-)
+const printableRows = computed(() => {
+  if (mode.value === 'blank') return []
+  return mode.value === 'history' ? historyRows.value : draftSheetRows.value
+})
 
-const blankRows = computed(() => Array.from({ length: Math.max(24 - printableRows.value.length, 0) }))
+const blankRows = computed(() => {
+  const pageRows = mode.value === 'blank' ? 28 : 24
+  return Array.from({ length: Math.max(pageRows - printableRows.value.length, 0) })
+})
 
 const epiDestination = computed(() =>
   activeDestinations.value.find(destination => normalizeSearchText(destination.name) === 'epi') || null
@@ -176,6 +180,7 @@ function draftSelection(row) {
   const variation = variationById.value.get(row.variationId)
   const item = variation ? itemById.value.get(variation.itemId) : null
   if (!variation || !item || item.id !== row.itemId) return null
+  if (row.targetType && !targetMatchesCatalogRow(row, item, variation)) return null
   return { item, variation }
 }
 
@@ -332,15 +337,16 @@ function printSheet() {
           <p class="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-400">Controle de EPIs</p>
           <h2 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Ficha individual de EPI</h2>
         </div>
-        <div class="inline-flex rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+        <div class="inline-flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
           <button type="button" class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40" :class="mode === 'new' ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'" :disabled="!props.canOperate" @click="setMode('new')">Nova entrega</button>
           <button type="button" class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors" :class="mode === 'history' ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'" @click="setMode('history')">Reimprimir histórico</button>
+          <button type="button" class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors" :class="mode === 'blank' ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'" @click="setMode('blank')">Folha em branco</button>
         </div>
         <div class="flex items-center gap-2">
           <button v-if="mode === 'new'" type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canRegister" @click="registerAndPrint">
             {{ submitting ? 'Registrando...' : 'Registrar entrega e imprimir' }}
           </button>
-          <button v-else type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!selectedPerson" @click="printSheet">Imprimir ficha</button>
+          <button v-else type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!selectedPerson" @click="printSheet">{{ mode === 'blank' ? 'Imprimir folha em branco' : 'Imprimir ficha' }}</button>
           <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800" @click="$emit('close')">Fechar</button>
         </div>
       </header>
@@ -414,7 +420,7 @@ function printSheet() {
               <div class="epi-sheet-identification">
                 <div class="epi-sheet-heading"><img :src="localBrandLogo" alt="Colorindo" /><h1>FICHA INDIVIDUAL DE EPI</h1></div>
                 <h2>{{ selectedPerson.name }}</h2>
-                <div class="epi-sheet-person-meta"><p class="epi-sheet-role"><strong>CARGO:</strong> {{ selectedPerson.role || '' }}</p><p><strong>MATRÍCULA:</strong> {{ registration }}</p></div>
+                <div class="epi-sheet-person-meta"><p class="epi-sheet-role"><strong>CARGO:</strong> {{ (selectedPerson.role || '').replace(/\s*\(turbo\)\s*$/i, '') }}</p><p><strong>MATRÍCULA:</strong> {{ registration }}</p></div>
                 <p class="epi-sheet-note"><strong>OBS:</strong> {{ notes }}</p>
               </div>
 

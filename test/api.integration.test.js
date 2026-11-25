@@ -99,7 +99,7 @@ test('cargos ignoram acentos e motivo de uso do EPI persiste sem alterar prazo',
   const other = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Pleno' } })
   assert.equal((await jsonRequest(url, `/api/roles/${other.data.id}`, { token, method: 'PUT', body: { name: 'Mecanico Junior' } })).response.status, 409)
   const rule = await jsonRequest(url, '/api/epis/role-rules', { token, body: {
-    roleName: 'Mecânico Junior', targetType: 'item', targetKey: 'test-item', days: 0, quantity: 4, usageReason: '  Motivo do PGR  ',
+    roleName: 'Mecânico Junior', targetType: 'categoria', targetKey: 'EPI|Proteção dos pés', days: 0, quantity: 4, usageReason: '  Motivo do PGR  ',
   } })
   assert.equal(rule.response.status, 200)
   assert.equal(rule.data.usageReason, 'Motivo do PGR')
@@ -112,6 +112,21 @@ test('cargos ignoram acentos e motivo de uso do EPI persiste sem alterar prazo',
   assert.equal((await update({ usageReason: 'x'.repeat(2001) })).response.status, 400)
   assert.equal((await jsonRequest(url, '/api/epis/role-rules')).data.find(row => row.id === rule.data.id).usageReason, 'Risco descrito no PGR')
   assert.equal((await update({ active: false })).data.usageReason, 'Risco descrito no PGR')
+  const filtered = await update({ requiredAttributes: { Bico: 'Composite' }, allowedCas: ['26092', ''] })
+  assert.equal(filtered.response.status, 200)
+  assert.equal(filtered.data.active, false)
+  assert.deepEqual(filtered.data.requiredAttributes, { Bico: 'Composite' })
+  assert.deepEqual(filtered.data.allowedCas, ['26092', ''])
+  assert.equal((await update({ requiredAttributes: { Bico: 'Composite', bico: 'Aço' } })).response.status, 400)
+  const persisted = (await jsonRequest(url, '/api/epis/role-rules')).data.find(row => row.id === rule.data.id)
+  assert.deepEqual(persisted.requiredAttributes, { Bico: 'Composite' })
+  const cleared = await update({ requiredAttributes: null, allowedCas: null })
+  assert.equal(cleared.data.requiredAttributes, null)
+  assert.equal(cleared.data.allowedCas, null)
+  const observed = await update({ observation: '  Aguardando CA e modelo  ' })
+  assert.equal(observed.data.observation, 'Aguardando CA e modelo')
+  assert.equal((await update({ days: 60 })).data.observation, 'Aguardando CA e modelo')
+  assert.equal((await update({ observation: 123 })).response.status, 400)
 })
 
 test('periodicidades em lote exigem admin, preservam motivos e cancelam tudo em conflito', { timeout: 20_000 }, async t => {
@@ -468,10 +483,17 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
 
   const person = await jsonRequest(url, '/api/people', {
     token,
-    body: { name: 'Pessoa Teste', role: 'Operador Teste', registration: 'MAT-123' },
+    body: { name: 'Pessoa Teste', role: 'Operador Teste', registration: 'MAT-123', workHours: '21:35 – 05:10' },
   })
   assert.equal(person.response.status, 200)
   assert.equal(person.data.registration, 'MAT-123')
+  assert.equal(person.data.workHours, '21:35 - 05:10')
+  const changeWorkHours = workHours => jsonRequest(url, `/api/people/${person.data.id}`, {
+    token, method: 'PUT', body: { workHours },
+  })
+  assert.equal((await changeWorkHours('07:00 - 27:00')).response.status, 400)
+  assert.equal((await changeWorkHours('07:00 - 17:00 (01:00 ALMOÇO)')).response.status, 400)
+  assert.equal((await changeWorkHours('07:00 - 17:00')).data.workHours, '07:00 - 17:00')
 
   const renamedRole = await jsonRequest(url, `/api/roles/${role.data.id}`, {
     method: 'PUT',
@@ -481,6 +503,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(renamedRole.response.status, 200)
   const peopleAfterRole = await jsonRequest(url, '/api/people', { token })
   assert.equal(peopleAfterRole.data.find(row => row.id === person.data.id).role, 'Operador Atualizado')
+  assert.equal(peopleAfterRole.data.find(row => row.id === person.data.id).workHours, '07:00 - 17:00')
 
   const item = await jsonRequest(url, '/api/items', {
     token,
@@ -668,12 +691,17 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { itemId: epiItem.data.id, values: { Tamanho: 'M', CA: '1234' }, stock: 6 },
   })
   assert.equal(epiVariation.response.status, 200)
+  const incompatibleVariation = await jsonRequest(url, '/api/items/variations', {
+    token,
+    body: { itemId: epiItem.data.id, values: { Tamanho: 'G', CA: '9999' }, stock: 4 },
+  })
+  assert.equal(incompatibleVariation.response.status, 200)
   const epiRule = await jsonRequest(url, '/api/epis/role-rules', {
     token,
     body: {
       roleName: 'Operador Atualizado',
-      targetType: 'item',
-      targetKey: epiItem.data.id,
+      targetType: 'variacao',
+      targetKey: epiVariation.data.id,
       targetLabel: 'Mascara de teste',
       days: 0,
       quantity: 4,
@@ -684,6 +712,35 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(epiRule.data.quantity, 4)
   assert.equal(epiRule.data.days, 0)
   assert.equal(epiRule.data.usageReason, 'Motivo do PGR para este cargo')
+  const convert = allowedCas => jsonRequest(url, '/api/epis/role-rules/use-item', {
+    token, method: 'PUT', body: {
+      changes: [{ id: epiRule.data.id, previousVariationId: epiVariation.data.id }],
+      allowedCas,
+    },
+  })
+  assert.equal((await convert([])).response.status, 409)
+  assert.equal((await convert(['5555'])).response.status, 409)
+  const converted = await convert(['1234'])
+  assert.equal(converted.response.status, 200)
+  assert.equal(converted.data[0].targetType, 'item')
+  assert.deepEqual(converted.data[0].allowedCas, ['1234'])
+  assert.equal(converted.data[0].quantity, 4)
+  assert.equal((await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { allowedCas: [] },
+  })).response.status, 400)
+  const updateItemCas = (previousAllowedCas, allowedCas) => jsonRequest(url, '/api/epis/role-rules/use-item', {
+    token, method: 'PUT', body: {
+      changes: [{ id: epiRule.data.id, previousItemId: epiItem.data.id, previousAllowedCas }],
+      allowedCas,
+    },
+  })
+  assert.equal((await updateItemCas(['1234'], ['5555'])).response.status, 409)
+  assert.equal((await updateItemCas(null, ['9999'])).response.status, 409)
+  const changedCas = await updateItemCas(['1234'], ['9999'])
+  assert.equal(changedCas.response.status, 200)
+  assert.deepEqual(changedCas.data[0].allowedCas, ['9999'])
+  assert.equal(changedCas.data[0].quantity, 4)
+  assert.equal((await updateItemCas(['9999'], ['1234'])).response.status, 200)
   const changedReason = await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
     token, method: 'PUT', body: { usageReason: 'Motivo atualizado' },
   })
@@ -714,6 +771,25 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     destination: 'EPI',
     destinationId: epiDestination.data.id,
   }
+  const incompatibleLine = { ...epiLine, variationId: incompatibleVariation.data.id, qty: 1 }
+  const wrongCa = await jsonRequest(url, '/api/movements/batch', {
+    token: operatorToken,
+    body: {
+      type: 'saida', items: [incompatibleLine], fields: epiFields,
+      stockCounts: { [incompatibleVariation.data.id]: 4 },
+    },
+  })
+  assert.equal(wrongCa.response.status, 400)
+  assert.match(wrongCa.data.error, /CA 9999/)
+  const wrongSingle = await jsonRequest(url, '/api/movements', {
+    token: operatorToken,
+    body: {
+      ...incompatibleLine, ...epiFields, type: 'saida',
+      stockCounts: { [incompatibleVariation.data.id]: 4 },
+    },
+  })
+  assert.equal(wrongSingle.response.status, 400)
+  assert.match(wrongSingle.data.error, /CAs aceitos: 1234/)
   const countRequired = await jsonRequest(url, '/api/movements/batch', {
     token: operatorToken,
     body: { type: 'saida', items: [{ ...epiLine, qty: 4 }], fields: epiFields },

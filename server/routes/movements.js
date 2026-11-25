@@ -8,6 +8,7 @@ import { requireAdmin, requireAuth, requireOperator } from '../middleware/auth.j
 import { findDuplicateItem, normalizeItemIdentity } from '../utils/catalogIdentity.js'
 import { calculateStockAfter, hasEnoughStock, isAdminStockAdjustment, parsePositiveQty } from '../utils/stockMath.js'
 import { getDestinationFullName } from '../utils/destinations.js'
+import { epiRuleMatchesPerson, epiVariationCa, matchesAllowedCa, matchesRequiredEpiAttributes } from '../../src/utils/epiSheet.js'
 
 import { idempotent } from '../middleware/idempotency.js'
 import { auditMovement, reconcileMovementBalances } from '../services/movementLedger.js'
@@ -71,7 +72,31 @@ function validateMovementPerson(fields) {
   if (requestedBy && row.name.toLowerCase() !== requestedBy.toLowerCase()) {
     return { ok: false, error: 'Quem retirou nao confere com a pessoa cadastrada selecionada.' }
   }
-  return { ok: true, requestedBy: row.name, requestedByPersonId: row.id }
+  return { ok: true, requestedBy: row.name, requestedByPersonId: row.id, person: { id: row.id, role: row.role_text } }
+}
+
+function validateDeliveryCa(person, variation) {
+  if (!person) return null
+  const rules = db.prepare(`
+    SELECT role_name, person_id, allowed_cas, required_attributes FROM epi_role_rules
+    WHERE target_type = 'item' AND target_key = ? AND active = 1 AND allowed_cas IS NOT NULL
+  `).all(variation.item_id).filter(rule => epiRuleMatchesPerson({
+    roleName: rule.role_name, personId: rule.person_id,
+  }, person)).map(rule => ({
+    allowedCas: JSON.parse(rule.allowed_cas),
+    requiredAttributes: JSON.parse(rule.required_attributes),
+  }))
+  if (!rules.length) return null
+
+  const values = JSON.parse(variation.vals || '{}')
+  const extras = JSON.parse(variation.extras || '{}')
+  if (rules.some(rule => matchesAllowedCa(rule, values, extras) && matchesRequiredEpiAttributes(rule, values, extras))) {
+    return { values, extras }
+  }
+
+  const ca = epiVariationCa(values, extras)
+  const allowed = [...new Set(rules.flatMap(rule => rule.allowedCas))].filter(Boolean).join(', ')
+  return { error: `A variação ${ca ? `com CA ${ca}` : 'sem CA'} não atende ao vínculo de EPI desta pessoa.${allowed ? ` CAs aceitos: ${allowed}.` : ''}` }
 }
 
 function validateMovementSupplier(fields) {
@@ -255,7 +280,7 @@ router.post('/', requireAuth, requireOperator, idempotent(db, (req, res) => {
     return res.status(400).json({ error: 'Quantidade deve ser positiva.' })
   }
 
-  const variation = db.prepare('SELECT stock, item_id FROM variations WHERE id = ? AND active = 1').get(m.variationId)
+  const variation = db.prepare('SELECT stock, item_id, vals, extras FROM variations WHERE id = ? AND active = 1').get(m.variationId)
   if (!variation) return res.status(404).json({ error: 'Variacao nao encontrada' })
   if (variation.item_id !== m.itemId) {
     return res.status(400).json({ error: 'Variacao nao pertence ao item informado.' })
@@ -273,6 +298,10 @@ router.post('/', requireAuth, requireOperator, idempotent(db, (req, res) => {
   if (!supplierValidation.ok) return res.status(400).json({ error: supplierValidation.error })
   const personValidation = m.type === 'saida' && !isStockAdjustment ? validateMovementPerson(m) : { ok: true, requestedBy: '', requestedByPersonId: '' }
   if (!personValidation.ok) return res.status(400).json({ error: personValidation.error })
+  const delivery = validateDeliveryCa(personValidation.person, variation)
+  if (delivery?.error) return res.status(400).json({ error: delivery.error })
+  const variationValues = delivery?.values ?? m.variationValues ?? {}
+  const variationExtras = delivery?.extras ?? m.variationExtras ?? {}
   const destinationValidation = m.type === 'saida' && !isStockAdjustment ? validateMovementDestination(m) : { ok: true, destination: '' }
   if (!destinationValidation.ok) return res.status(400).json({ error: destinationValidation.error })
 
@@ -288,7 +317,7 @@ router.post('/', requireAuth, requireOperator, idempotent(db, (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       id, m.type, m.variationId, m.itemId,
       m.itemName || '', m.itemGroup || '', m.itemCategory || '', m.itemSubcategory || '', m.itemUnit || '',
-      JSON.stringify(m.variationValues || {}), JSON.stringify(m.variationExtras || {}),
+      JSON.stringify(variationValues), JSON.stringify(variationExtras),
       qty, stockBefore, stockAfter,
       date,
       supplierValidation.supplier, unitCost, personValidation.requestedBy, personValidation.requestedByPersonId, destinationValidation.destination, m.docRef || '', m.note || '',
@@ -309,8 +338,8 @@ router.post('/', requireAuth, requireOperator, idempotent(db, (req, res) => {
     itemCategory: m.itemCategory,
     itemSubcategory: m.itemSubcategory,
     itemUnit: m.itemUnit,
-    variationValues: m.variationValues || {},
-    variationExtras: m.variationExtras || {},
+    variationValues,
+    variationExtras,
     qty,
     stockBefore,
     stockAfter,
@@ -424,7 +453,7 @@ router.post('/batch', requireAuth, requireOperator, idempotent(db, (req, res) =>
       if (!rawItem.variationId || !rawItem.itemId) {
         return res.status(400).json({ error: 'Itens do lote precisam de variationId e itemId.' })
       }
-      variation = db.prepare('SELECT stock, item_id FROM variations WHERE id = ? AND active = 1').get(rawItem.variationId)
+      variation = db.prepare('SELECT stock, item_id, vals, extras FROM variations WHERE id = ? AND active = 1').get(rawItem.variationId)
       if (!variation) return res.status(404).json({ error: `Variacao nao encontrada: ${rawItem.variationId}` })
       if (variation.item_id !== rawItem.itemId) {
         return res.status(400).json({ error: 'Variacao nao pertence ao item informado.' })
@@ -451,6 +480,9 @@ router.post('/batch', requireAuth, requireOperator, idempotent(db, (req, res) =>
     if (!supplierValidation.ok) return res.status(400).json({ error: supplierValidation.error })
     const personValidation = lineType === 'saida' ? validateMovementPerson(rawFields) : { ok: true, requestedBy: '', requestedByPersonId: '' }
     if (!personValidation.ok) return res.status(400).json({ error: personValidation.error })
+    const delivery = validateDeliveryCa(personValidation.person, variation)
+    if (delivery?.error) return res.status(400).json({ error: delivery.error })
+    if (delivery) item = { ...item, variationValues: delivery.values, variationExtras: delivery.extras }
     const destinationValidation = lineType === 'saida' ? validateMovementDestination(rawFields) : { ok: true, destination: '' }
     if (!destinationValidation.ok) return res.status(400).json({ error: destinationValidation.error })
 

@@ -1,6 +1,8 @@
 <script setup>
 import { useToast } from '../../composables/useToast.js'
 
+defineProps({ updateAvailable: Boolean })
+const emit = defineEmits(['reload', 'dismiss-update'])
 const { toasts } = useToast()
 </script>
 
@@ -28,6 +30,28 @@ const { toasts } = useToast()
               {{ toast.action.label }}
             </button>
           </div>
+        </div>
+        <div
+          v-if="updateAvailable"
+          key="app-update"
+          class="ds-toast flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3 text-sm font-medium"
+        >
+          <span role="status" class="flex-1">Nova versão disponível</span>
+          <button
+            type="button"
+            class="ds-toast-action rounded-md px-2.5 py-1 text-xs font-semibold transition-colors"
+            @click="emit('reload')"
+          >
+            Recarregar página
+          </button>
+          <button
+            type="button"
+            class="ds-toast-action ml-auto flex h-7 w-7 items-center justify-center rounded-md text-base"
+            aria-label="Fechar aviso de atualização"
+            @click="emit('dismiss-update')"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
       </TransitionGroup>
     </div>

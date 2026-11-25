@@ -23,6 +23,7 @@ import { useRoles } from './composables/useRoles.js'
 import { useEpis } from './composables/useEpis.js'
 import { useUsers } from './composables/useUsers.js'
 import { useAuth } from './composables/useAuth.js'
+import { useAppUpdate } from './composables/useAppUpdate.js'
 import { useWorkOrders } from './composables/useWorkOrders.js'
 import { useMotors } from './composables/useMotors.js'
 import { useClosings } from './composables/useClosings.js'
@@ -56,11 +57,21 @@ const { workOrders, loadData: loadWorkOrders } = useWorkOrders()
 const { motors, loadData: loadMotors } = useMotors()
 const { loadData: loadClosings } = useClosings()
 const { success, error } = useToast()
+const { updateAvailable, dismissUpdate, reloadApp } = useAppUpdate()
 watch(stockConfirmationRevision, async () => {
   try { await Promise.all([loadItems(), loadMovements()]) }
   catch { error('Movimentação salva. Atualize a página para recarregar os saldos e o histórico.') }
 })
-const localBrandFavicon = '/local-brand/favicon.png'
+const localBrandHeaderLogo = ref('/local-brand/header-logo-96.png')
+const localBrandFavicon = '/local-brand/favicon-32.png'
+
+function onHeaderLogoError(event) {
+  if (localBrandHeaderLogo.value !== localBrandFavicon) {
+    localBrandHeaderLogo.value = localBrandFavicon
+  } else {
+    event.currentTarget.style.display = 'none'
+  }
+}
 const localBrandName = ref('Estoque')
 const environmentBadge = ref(null)
 const backupHealth = ref(null)
@@ -287,12 +298,12 @@ const resources = createResourceLoader(Object.fromEntries(dataSources))
 const tabResources = {
   dashboard: ['materiais', 'movimentações', 'ordens de serviço', 'motores', 'fechamentos'],
   catalogo: ['materiais', 'destinos'],
-  inventario: ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs'],
+  inventario: ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs', 'ordens de serviço', 'fechamentos'],
   movimentacoes: ['materiais', 'movimentações', 'destinos', 'pessoas', 'fornecedores', 'ordens de serviço'],
   ordens: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
   motores: ['materiais', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
   cadastros: ['materiais', 'locais', 'destinos', 'pessoas', 'fornecedores', 'cargos', 'EPIs', 'usuários'],
-  'epis-admin': ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs'],
+  'epis-admin': ['materiais', 'destinos', 'pessoas', 'cargos', 'EPIs'],
   relatorios: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores', 'fechamentos'],
 }
 let activeLoads = 0
@@ -307,7 +318,17 @@ async function loadSources(names, force = false) {
   } finally { syncing.value = --activeLoads > 0 }
 }
 function loadAllData() { return loadSources(dataSources.map(([name]) => name), true) }
-function loadTabData() { return loadSources(tabResources[activeTab.value] || dataSources.map(([name]) => name)) }
+const catalogDetailResources = ['movimentações', 'ordens de serviço']
+const epiControlResources = ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs']
+function loadTabData() {
+  if (activeTab.value === 'inventario') {
+    if (!requestedInventorySection.value) return
+    if (requestedInventorySection.value === 'epis') return loadSources(epiControlResources)
+  }
+  const names = tabResources[activeTab.value] || dataSources.map(([name]) => name)
+  const withCatalogDetail = activeTab.value === 'catalogo' && requestedVariationId.value
+  return loadSources(withCatalogDetail ? [...names, ...catalogDetailResources] : names)
+}
 function invalidateResources() { resources.invalidate() }
 function refreshVisibleData() { if (document.visibilityState === 'visible') loadTabData() }
 
@@ -343,10 +364,10 @@ onMounted(async () => {
   healthTimer = window.setInterval(loadHealthStatus, 15_000)
   await checkSession()
   if (['cadastros', 'epis-admin'].includes(activeTab.value) && !isAdmin.value) activeTab.value = 'catalogo'
-  await loadAllData()
   if (savedUiState.catalogGroup) activeGroup.value = savedUiState.catalogGroup
   await applyLocationRoute()
   routeReady = true
+  loadTabData()
   window.history.replaceState(null, '', routeHref(currentRoute.value))
   window.addEventListener('hashchange', applyLocationRoute)
   window.addEventListener('app:data-invalidated', loadAllData)
@@ -371,7 +392,7 @@ onUnmounted(() => {
 watch(user, (newUser, oldUser) => {
   resources.invalidate()
   if (!newUser) { clearPeople(); clearUsers() }
-  if (newUser && !oldUser) loadAllData()
+  if (routeReady && newUser && !oldUser) loadTabData()
   if (!isAdmin.value && ['cadastros', 'epis-admin'].includes(activeTab.value)) activeTab.value = 'catalogo'
 })
 
@@ -383,13 +404,20 @@ watch(activeTab, async value => {
 }, { flush: 'post' })
 
 watch(activeTab, value => {
-  loadTabData()
+  if (routeReady) loadTabData()
   saveUiState({ activeTab: value })
+})
+watch(requestedVariationId, id => {
+  if (routeReady && id && activeTab.value === 'catalogo') loadSources(catalogDetailResources)
 })
 
 watch(catalogSearch, value => saveUiState({ catalogSearch: value }))
 watch(activeGroup, value => saveUiState({ catalogGroup: value || '' }))
-watch(requestedInventorySection, value => { if (value) saveUiState({ inventorySection: value }) })
+watch(requestedInventorySection, value => {
+  if (!value) return
+  if (routeReady && activeTab.value === 'inventario') loadTabData()
+  saveUiState({ inventorySection: value })
+})
 watch(requestedInventoryStatus, value => { if (value && value !== '__pending__') saveUiState({ inventoryStatus: value }) })
 watch(requestedInventorySearch, value => saveUiState({ inventorySearch: value || '' }))
 watch(movSubTab, value => { if (value) saveUiState({ movSubTab: value }) })
@@ -445,6 +473,7 @@ function openMovementTab(tab, prefill = null) {
 }
 
 function openGlobalSearch() {
+  loadSources(['materiais', 'destinos', 'pessoas', 'ordens de serviço', 'motores'])
   globalSearchOpen.value = true
   globalCreateOpen.value = false
   shortcutHelpOpen.value = false
@@ -715,6 +744,7 @@ async function applyLocationRoute() {
   const route = parseRoute(window.location.hash)
   if (!route) return
   applyingRoute = true
+  if (route.tab === 'ordens' && route.orderId) await loadSources(['ordens de serviço'])
   workOrderPreview.value = null
   navigateTab(route)
   if (route.tab === 'catalogo') {
@@ -781,7 +811,7 @@ function handleGlobalShortcutKeydown(event) {
     <div class="ds-app-main">
       <header class="ds-topbar">
         <AppLink target="dashboard" class="ds-nav-brand" title="Ir para o início" @navigate="navigateTab">
-          <img :src="localBrandFavicon" :alt="localBrandName" class="h-7 w-7 rounded-md object-contain" @error="$event.currentTarget.style.display = 'none'" />
+          <img :src="localBrandHeaderLogo" :alt="localBrandName" class="h-7 w-7 rounded-md object-contain" @error="onHeaderLogoError" />
           <span class="ds-nav-brand-name">{{ localBrandName }}</span>
           <span
             v-if="environmentBadge"
@@ -1086,7 +1116,7 @@ function handleGlobalShortcutKeydown(event) {
     </div>
 
     <!-- Toasts -->
-    <ToastContainer />
+    <ToastContainer :update-available="updateAvailable" @reload="reloadApp" @dismiss-update="dismissUpdate" />
     <StockConfirmationDialog />
   </div>
 </template>

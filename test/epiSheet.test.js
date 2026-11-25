@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildEpiKitRows, buildEpiSheetRows, movementPersonMatches } from '../src/utils/epiSheet.js'
+import { buildEpiKitRows, buildEpiSheetRows, createEpiMovementLookup, movementPersonMatches } from '../src/utils/epiSheet.js'
 
 test('ficha de EPI usa somente saídas da pessoa e extrai os campos da variação', () => {
   const person = { id: 'p1', name: 'João da Silva' }
@@ -40,4 +40,18 @@ test('kit do cargo preserva quantidade e exige escolha quando ha varias variacoe
     { id: 'rule:r1', ruleId: 'r1', targetType: 'item', targetKey: 'mask', targetLabel: 'Mascara', quantity: 4, itemId: '', variationId: '' },
     { id: 'rule:r2', ruleId: 'r2', targetType: 'variacao', targetKey: 'boot_42', targetLabel: 'Botina 42', quantity: 1, itemId: 'boot', variationId: 'boot_42' },
   ])
+})
+
+test('indice de saidas de EPI preserva vinculos por ID e nome e a ordem do historico', () => {
+  const movements = [
+    { type: 'saida', requestedBy: 'Ana Sa' },
+    { type: 'saida', requestedByPersonId: 'b', requestedBy: 'Ana Sa' },
+    { type: 'entrada', requestedByPersonId: 'a', requestedBy: 'Ana Sa' },
+    { type: 'saida', requestedByPersonId: 'a', requestedBy: 'Nome anterior' },
+    { type: 'saida', requestedBy: 'ANA SA' },
+  ]
+  const lookup = createEpiMovementLookup(movements)
+  for (const person of [{ id: 'a', name: 'Ana Sá' }, { id: 'b', name: 'Outra' }, { id: 'c', name: 'Ausente' }]) {
+    assert.deepEqual(lookup(person), movements.filter(movement => movementPersonMatches(movement, person)))
+  }
 })

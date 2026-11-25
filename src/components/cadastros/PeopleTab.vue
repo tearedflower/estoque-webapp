@@ -20,9 +20,17 @@ const isDev = computed(() =>
   (window.location.hostname === 'localhost' && window.location.port === '3001')
 )
 
+const lastRegistration = computed(() => [...people.value]
+  .filter(person => String(person.registration || '').trim())
+  .sort((a, b) => Number(b.registrationOrder || 0) - Number(a.registrationOrder || 0))[0]?.registration || '')
+const registrationPlaceholder = computed(() => lastRegistration.value
+  ? `Última matrícula cadastrada: ${lastRegistration.value}`
+  : 'Nº da matrícula (opcional)')
+
 const newPersonName = ref('')
 const newPersonRole = ref('')
 const newPersonRegistration = ref('')
+const newPersonWorkHours = ref('')
 const newPersonStatus = ref('ativo')
 const addingPerson = ref(false)
 const peopleSection = ref(props.initialSection === 'cargos' ? 'cargos' : 'funcionarios')
@@ -30,9 +38,11 @@ const editingPersonId = ref(null)
 const editPersonName = ref('')
 const editPersonRole = ref('')
 const editPersonRegistration = ref('')
+const editPersonWorkHours = ref('')
 const editPersonStatus = ref('ativo')
 const personStatusFilter = ref(['all'])
 const personSearch = ref('')
+const personSort = ref('name')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const selectedPersonIds = ref([])
@@ -60,17 +70,18 @@ const personStatusOptions = computed(() => [
     count: people.value.filter(person => personStatus(person) === status.id).length,
   })),
 ])
-const filteredPeople = computed(() =>
-  (personStatusFilter.value.includes('all')
-    ? people.value
-    : people.value.filter(person => personStatusFilter.value.includes(personStatus(person)))
-  ).filter(person => {
-    const q = normalizeSearch(personSearch.value)
-    if (!q) return true
-    return [person.name, person.registration, person.role, personStatusLabel(personStatus(person))]
+const filteredPeople = computed(() => {
+  const q = normalizeSearch(personSearch.value)
+  const peopleMatchingFilters = people.value.filter(person => {
+    const status = personStatus(person)
+    if (!personStatusFilter.value.includes('all') && !personStatusFilter.value.includes(status)) return false
+    return !q || [person.name, person.registration, person.role, person.workHours, personStatusLabel(status)]
       .some(value => normalizeSearch(value).includes(q))
   })
-)
+  return personSort.value === 'recent'
+    ? peopleMatchingFilters.sort((a, b) => Number(b.registrationOrder || 0) - Number(a.registrationOrder || 0))
+    : peopleMatchingFilters
+})
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredPeople.value.length / pageSize.value)))
 const paginatedPeople = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
@@ -78,7 +89,7 @@ const paginatedPeople = computed(() => {
 })
 const selectedPeople = computed(() => people.value.filter(person => selectedPersonIds.value.includes(person.id)))
 
-watch([personStatusFilter, personSearch, pageSize], () => {
+watch([personStatusFilter, personSearch, personSort, pageSize], () => {
   currentPage.value = 1
   selectedPersonIds.value = []
 })
@@ -125,16 +136,18 @@ async function syncPeopleRolesNow() {
   }
 }
 
-function startAddPerson() { addingPerson.value = true; newPersonName.value = ''; newPersonRole.value = ''; newPersonRegistration.value = ''; newPersonStatus.value = 'ativo' }
+function startAddPerson() { addingPerson.value = true; newPersonName.value = ''; newPersonRole.value = ''; newPersonRegistration.value = ''; newPersonWorkHours.value = ''; newPersonStatus.value = 'ativo' }
 function cancelAddPerson() { addingPerson.value = false }
 async function confirmAddPerson() {
   if (!canAddPerson.value) return
   personSaving.value = true
   try {
-    const r = await addPerson(newPersonName.value, newPersonRole.value, newPersonStatus.value, newPersonRegistration.value)
+    const r = await addPerson(newPersonName.value, newPersonRole.value, newPersonStatus.value, newPersonRegistration.value, newPersonWorkHours.value)
     if (!r.ok) { error(r.error); return }
     success('Pessoa adicionada.')
     addingPerson.value = false
+  } catch (cause) {
+    error(cause.message || 'Não foi possível adicionar a pessoa.')
   } finally {
     personSaving.value = false
   }
@@ -195,6 +208,7 @@ function startEditPerson(p) {
   editPersonName.value = p.name
   editPersonRole.value = p.role || ''
   editPersonRegistration.value = p.registration || ''
+  editPersonWorkHours.value = p.workHours || ''
   editPersonStatus.value = p.status || (p.active ? 'ativo' : 'inativo')
 }
 function cancelEditPerson() { editingPersonId.value = null }
@@ -206,12 +220,15 @@ async function confirmEditPerson() {
       name: editPersonName.value,
       role: editPersonRole.value,
       registration: editPersonRegistration.value,
+      workHours: editPersonWorkHours.value,
       status: editPersonStatus.value,
       active: editPersonStatus.value === 'ativo',
     })
     if (!r.ok) { error(r.error); return }
     success('Pessoa atualizada.')
     editingPersonId.value = null
+  } catch (cause) {
+    error(cause.message || 'Não foi possível atualizar a pessoa.')
   } finally {
     personSaving.value = false
   }
@@ -389,11 +406,16 @@ function personStatusClass(person) {
         />
         <input
           v-model="newPersonRegistration"
-          placeholder="Nº da matrícula (opcional)"
+          :placeholder="registrationPlaceholder"
           class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:border-primary-400 dark:focus:border-primary-500"
           @keydown.enter="confirmAddPerson"
           @keydown.escape="cancelAddPerson"
         />
+        <label>
+          <span class="ds-label">Horário de trabalho</span>
+          <input v-model="newPersonWorkHours" placeholder="07:00 - 17:00" class="ds-input w-full"
+            @keydown.enter="confirmAddPerson" @keydown.escape="cancelAddPerson" />
+        </label>
         <div v-if="activeRoles.length">
           <select
             v-model="newPersonRole"
@@ -432,7 +454,7 @@ function personStatusClass(person) {
           <p class="text-xs font-semibold text-gray-700 dark:text-gray-200">Buscar e filtrar</p>
           <p class="text-xs text-gray-400 dark:text-gray-500">{{ filteredPeople.length }} de {{ people.length }} pessoas</p>
         </div>
-        <div class="grid gap-2 sm:grid-cols-[1fr_auto_6rem]">
+        <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_auto_12rem_6rem]">
           <input
             v-model="personSearch"
             type="search"
@@ -454,7 +476,12 @@ function personStatusClass(person) {
               {{ option.label }} <span class="tabular-nums opacity-70">({{ option.count }})</span>
             </button>
           </div>
+          <select v-model="personSort" class="ds-input" aria-label="Ordenar pessoas">
+            <option value="name">Ordem por nome</option>
+            <option value="recent">Mais recentes primeiro</option>
+          </select>
           <select
+            aria-label="Pessoas por página"
             v-model.number="pageSize"
             class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary-400 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
           >
@@ -479,9 +506,10 @@ function personStatusClass(person) {
         <table v-if="filteredPeople.length" class="ds-table table-fixed min-w-[40rem]">
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-              <th class="w-[34%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Nome</th>
-              <th class="w-[14%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Matrícula</th>
+              <th class="w-[28%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Nome</th>
+              <th class="w-[10%] text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Matrícula</th>
               <th class="text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Cargo</th>
+              <th class="whitespace-nowrap text-left px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">Horário de trabalho</th>
               <th class="text-center px-4 py-2.5 font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-24">Status</th>
               <th class="px-4 py-2.5 text-center font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider w-36">Ações</th>
             </tr>
@@ -512,6 +540,10 @@ function personStatusClass(person) {
                   <span v-else class="text-xs text-gray-400 dark:text-gray-500 italic">Sem cargos cadastrados</span>
                 </td>
                 <td class="px-4 py-3">
+                  <input v-model="editPersonWorkHours" aria-label="Horário de trabalho" placeholder="07:00 - 17:00"
+                    class="ds-input w-full min-w-28" @keydown.enter="confirmEditPerson" @keydown.escape="cancelEditPerson" />
+                </td>
+                <td class="px-4 py-3">
                   <select v-model="editPersonStatus" class="w-full px-2 py-1 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
                     <option v-for="status in PERSON_STATUSES" :key="status.id" :value="status.id">{{ status.label }}</option>
                   </select>
@@ -532,6 +564,7 @@ function personStatusClass(person) {
                 <td class="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">{{ p.name }}</td>
                 <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ p.registration || '—' }}</td>
                 <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ p.role || '—' }}</td>
+                <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-500 dark:text-gray-400">{{ p.workHours || '—' }}</td>
                 <td class="px-4 py-3 text-center">
                   <button
                     class="px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors"

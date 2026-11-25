@@ -211,6 +211,7 @@ db.exec(`
     name TEXT NOT NULL UNIQUE,
     role_text TEXT DEFAULT '',
     registration TEXT DEFAULT '',
+    work_hours TEXT NOT NULL DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'ativo' CHECK(status IN ('ativo','inativo','demitido','afastado'))
   );
@@ -446,13 +447,32 @@ if (!peopleCols.includes('status')) {
 if (!peopleCols.includes('registration')) {
   db.prepare("ALTER TABLE people ADD COLUMN registration TEXT DEFAULT ''").run()
 }
+if (!peopleCols.includes('work_hours')) {
+  db.prepare("ALTER TABLE people ADD COLUMN work_hours TEXT NOT NULL DEFAULT ''").run()
+}
+
+if (!db.prepare("PRAGMA table_info(roles)").all().some(column => column.name === 'sector')) {
+  db.prepare("ALTER TABLE roles ADD COLUMN sector TEXT NOT NULL DEFAULT ''").run()
+}
 
 const epiRoleRuleCols = db.prepare("PRAGMA table_info(epi_role_rules)").all().map(c => c.name)
+if (!epiRoleRuleCols.includes('required_attributes')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN required_attributes TEXT').run()
+}
+if (!epiRoleRuleCols.includes('person_id')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN person_id TEXT').run()
+}
+if (!epiRoleRuleCols.includes('allowed_cas')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN allowed_cas TEXT').run()
+}
 if (!epiRoleRuleCols.includes('days')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN days INTEGER NOT NULL DEFAULT 30").run()
 }
 if (!epiRoleRuleCols.includes('quantity')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1").run()
+}
+if (!epiRoleRuleCols.includes('observation')) {
+  db.prepare("ALTER TABLE epi_role_rules ADD COLUMN observation TEXT NOT NULL DEFAULT ''").run()
 }
 if (!epiRoleRuleCols.includes('usage_reason')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN usage_reason TEXT NOT NULL DEFAULT ''").run()

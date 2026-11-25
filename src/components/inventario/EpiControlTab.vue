@@ -1,11 +1,12 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
+import { useRoles } from '../../composables/useRoles.js'
 import { useItems } from '../../composables/useItems.js'
 import { personStatusLabel, usePeople } from '../../composables/usePeople.js'
 import { useMovements } from '../../composables/useMovements.js'
 import { useEpis } from '../../composables/useEpis.js'
 import { useToast } from '../../composables/useToast.js'
-import { catalogRowsForTarget, movementPersonMatches } from '../../utils/epiSheet.js'
+import { catalogRowsForTarget, createEpiMovementLookup, epiRuleMatchesPerson, matchesAllowedCa, matchesRequiredEpiAttributes } from '../../utils/epiSheet.js'
 import { epiControlCsv } from '../../utils/epiControlCsv.js'
 import AttributeBadges from '../ui/AttributeBadges.vue'
 import AppDialog from '../ui/AppDialog.vue'
@@ -17,13 +18,18 @@ defineProps({ canOperate: { type: Boolean, default: false } })
 
 const { items, variations } = useItems()
 const { people } = usePeople()
+const { roles } = useRoles()
+const sectorByRole = computed(() => new Map(roles.value.map(role => [normalize(role.name), role.sector])))
 const { movements, addMovementBatch, editMovement } = useMovements()
-const { activeRoleRules, activePeriodicities } = useEpis()
+const { roleRules, activePeriodicities } = useEpis()
 const { success, error } = useToast()
 const isAdmin = inject('isAdmin')
 
 const search = ref('')
 const statusFilters = ref([])
+const controlView = ref('list')
+const groupBy = ref([])
+const expandedGroupKeys = ref(new Set())
 const personStatusFilter = ref('ativo')
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -48,6 +54,8 @@ const targetTypeLabels = {
 }
 
 const statusConfig = {
+  'Sem periodicidade': { label: 'Sem periodicidade', pill: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
+  Inativo: { label: 'Inativo — não conta', pill: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
   Pendente: {
     label: 'Pendente',
     pill: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
@@ -71,6 +79,7 @@ const statusConfig = {
 }
 
 const itemById = computed(() => new Map(items.value.map(item => [item.id, item])))
+const variationById = computed(() => new Map(variations.value.map(variation => [variation.id, variation])))
 
 function normalize(value) {
   return String(value || '')
@@ -85,11 +94,17 @@ function targetFromRule(rule) {
     targetType: rule.targetType,
     targetKey: rule.targetKey,
     targetLabel: rule.targetLabel,
+    allowedCas: rule.allowedCas,
+    requiredAttributes: rule.requiredAttributes,
   }
 }
 
 function targetMatchesMovement(target, movement) {
   if (!target || !movement || movement.type !== 'saida') return false
+  if (!matchesAllowedCa(target, movement.variationValues, movement.variationExtras)) return false
+  const variation = variationById.value.get(movement.variationId)
+  const values = { ...variation?.values, ...movement.variationValues }
+  if (!matchesRequiredEpiAttributes(target, values, movement.variationExtras)) return false
   if (target.targetType === 'grupo') return movement.itemGroup === target.targetKey
   if (target.targetType === 'categoria') return `${movement.itemGroup || ''}|${movement.itemCategory || ''}` === target.targetKey
   if (target.targetType === 'subcategoria') return `${movement.itemGroup || ''}|${movement.itemCategory || ''}|${movement.itemSubcategory || ''}` === target.targetKey
@@ -121,6 +136,8 @@ function formatDate(value) {
 }
 
 function epiStatus(record) {
+  if (!record.rule.active) return 'Inativo'
+  if (Number(record.rule.days) === 0) return 'Sem periodicidade'
   if (!record.movement) return 'Pendente'
   if (!record.dueDate) return 'Em dia'
   const today = new Date()
@@ -160,8 +177,18 @@ function resolveQuickTarget(rule) {
   return matches.length === 1 ? matches[0] : null
 }
 
+const catalogRowsByRule = computed(() => new Map(roleRules.value.map(rule => [
+  rule, catalogRowsForTarget(items.value, variations.value, rule),
+])))
+const movementsForPerson = computed(() => createEpiMovementLookup(movements.value))
+
 function targetRows(rule) {
-  return catalogRowsForTarget(items.value, variations.value, rule)
+  return catalogRowsByRule.value.get(rule) ?? catalogRowsForTarget(items.value, variations.value, rule)
+}
+
+function matchingMovements(personMovements, target) {
+  return personMovements.filter(movement => targetMatchesMovement(target, movement))
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
 }
 
 function targetVariationRow(rule) {
@@ -176,16 +203,13 @@ const records = computed(() => {
   for (const person of people.value) {
     const personStatus = person.status || (person.active ? 'ativo' : 'inativo')
     if (personStatusFilter.value !== 'all' && personStatus !== personStatusFilter.value) continue
-    const role = String(person.role || '').trim()
-    if (!role) continue
-    const rules = activeRoleRules.value.filter(rule => normalize(rule.roleName) === normalize(role))
+    const rules = roleRules.value.filter(rule => epiRuleMatchesPerson(rule, person))
+    if (!rules.length) continue
+    const personMovements = movementsForPerson.value(person)
     for (const rule of rules) {
-      if (Number(rule.days) === 0 || !targetRows(rule).length) continue
+      if (!targetRows(rule).length) continue
       const target = targetFromRule(rule)
-      const movement = movements.value
-        .filter(movement => movementPersonMatches(movement, person) && targetMatchesMovement(target, movement))
-        .slice()
-        .sort((a, b) => new Date(b.date) - new Date(a.date))[0] || null
+      const movement = matchingMovements(personMovements, target)[0] || null
       const period = periodForRule(rule)
       const dueDate = movement && period ? addDays(movement.date, period.days) : null
       const record = { person: { ...person, status: personStatus }, rule, movement, period, dueDate }
@@ -198,15 +222,44 @@ const records = computed(() => {
   )
 })
 
-const counts = computed(() => ({
-  all: records.value.length,
-  ok: records.value.filter(record => record.status === 'Em dia').length,
-  attention: records.value.filter(record => ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'].includes(record.status)).length,
-  pending: records.value.filter(record => record.status === 'Pendente').length,
-  upcoming: records.value.filter(record => record.status === 'Programar troca').length,
-  soon: records.value.filter(record => record.status === 'Vence em breve').length,
-  expired: records.value.filter(record => record.status === 'Vencido').length,
-}))
+const searchedRecords = computed(() => {
+  const q = normalize(search.value)
+  if (!q) return records.value
+  return records.value.filter(record => [
+    record.person.name,
+    record.person.role,
+    sectorByRole.value.get(normalize(record.person.role)),
+    personStatusLabel(record.person.status),
+    record.rule.targetLabel,
+    record.rule.targetKey,
+    record.movement?.itemName,
+    record.status,
+  ].some(value => normalize(value).includes(q)))
+})
+
+const statusesByFilter = {
+  attention: ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'],
+  ok: ['Em dia'],
+  pending: ['Pendente'],
+  upcoming: ['Programar troca'],
+  soon: ['Vence em breve'],
+  expired: ['Vencido'],
+  inactive: ['Inativo'],
+}
+
+
+const counts = computed(() => {
+  const byStatus = new Map()
+  for (const { status } of searchedRecords.value) {
+    byStatus.set(status, (byStatus.get(status) || 0) + 1)
+  }
+  return {
+    all: searchedRecords.value.length - (byStatus.get('Inativo') || 0),
+    ...Object.fromEntries(Object.entries(statusesByFilter).map(([id, statuses]) => [
+      id, statuses.reduce((total, status) => total + (byStatus.get(status) || 0), 0),
+    ])),
+  }
+})
 
 const filterTabs = computed(() => [
   { id: 'all', label: 'Todos', count: counts.value.all },
@@ -216,16 +269,9 @@ const filterTabs = computed(() => [
   { id: 'upcoming', label: 'Troca em 8–30 dias', count: counts.value.upcoming },
   { id: 'soon', label: 'Vence em breve', count: counts.value.soon },
   { id: 'expired', label: 'Vencidos', count: counts.value.expired },
+  { id: 'inactive', label: 'Inativos (não contam)', count: counts.value.inactive },
 ])
 
-const statusesByFilter = {
-  attention: ['Pendente', 'Programar troca', 'Vence em breve', 'Vencido'],
-  ok: ['Em dia'],
-  pending: ['Pendente'],
-  upcoming: ['Programar troca'],
-  soon: ['Vence em breve'],
-  expired: ['Vencido'],
-}
 
 function toggleStatusFilter(filterId) {
   if (filterId === 'all') {
@@ -244,31 +290,90 @@ function statusFilterActive(filterId) {
 }
 
 const filteredRecords = computed(() => {
-  const q = normalize(search.value)
   const selectedStatuses = new Set(
     statusFilters.value.flatMap(filterId => statusesByFilter[filterId] || [])
   )
-  return records.value.filter(record => {
-    const statusOk = selectedStatuses.size === 0 || selectedStatuses.has(record.status)
-    if (!statusOk) return false
-    if (!q) return true
-    return [
-      record.person.name,
-      record.person.role,
-      personStatusLabel(record.person.status),
-      record.rule.targetLabel,
-      record.rule.targetKey,
-      record.movement?.itemName,
-      record.status,
-    ].some(value => normalize(value).includes(q))
-  })
+  return searchedRecords.value.filter(record =>
+    selectedStatuses.size === 0 ? record.status !== 'Inativo' : selectedStatuses.has(record.status)
+  )
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredRecords.value.length / pageSize.value)))
-const paginatedRecords = computed(() => {
+const groupOptions = [
+  { id: 'sector', label: 'Setor', unit: 'setores' },
+  { id: 'epi', label: 'Tipo de EPI', unit: 'tipos de EPI' },
+  { id: 'person', label: 'Nome', unit: 'pessoas' },
+]
+const showPersonColumn = computed(() => controlView.value === 'list' || !groupBy.value.includes('person'))
+
+function toggleGroupBy(field) {
+  if (!groupBy.value.includes(field)) {
+    groupBy.value = [...groupBy.value, field]
+  } else {
+    groupBy.value = groupBy.value.filter(selected => selected !== field)
+  }
+}
+
+function groupLabelFor(field, record) {
+  if (field === 'sector') return sectorByRole.value.get(normalize(record.person.role)) || 'Sem setor vinculado'
+  if (field === 'epi') {
+    const { rule } = record
+    return itemById.value.get(rule.targetKey)?.name || targetVariationRow(rule)?.item.name ||
+      rule.targetKey.split('|').at(-1) || readableTargetLabel(rule)
+  }
+  return record.person.name
+}
+
+function buildResultGroups(records, fields, path = []) {
+  const [field, ...remainingFields] = fields
+  const groups = new Map()
+  for (const record of records) {
+    const label = groupLabelFor(field, record)
+    const value = field === 'person' ? record.person.id : normalize(label)
+    if (!groups.has(value)) groups.set(value, { label, records: [] })
+    groups.get(value).records.push(record)
+  }
+  return [...groups.entries()]
+    .map(([value, group]) => {
+      const groupPath = [...path, value]
+      return {
+        ...group,
+        key: JSON.stringify(groupPath),
+        depth: path.length,
+        children: remainingFields.length ? buildResultGroups(group.records, remainingFields, groupPath) : [],
+      }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base', numeric: true }))
+}
+
+const resultGroups = computed(() => controlView.value === 'grouped' && groupBy.value.length
+  ? buildResultGroups(filteredRecords.value, groupBy.value)
+  : [])
+
+const entryCount = computed(() => controlView.value === 'list' ? filteredRecords.value.length : resultGroups.value.length)
+const totalPages = computed(() => Math.max(1, Math.ceil(entryCount.value / pageSize.value)))
+const pageGroups = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return filteredRecords.value.slice(start, start + pageSize.value)
+  const end = start + pageSize.value
+  return controlView.value === 'list'
+    ? [{ key: 'list', records: filteredRecords.value.slice(start, end), children: [] }]
+    : visibleGroups(resultGroups.value.slice(start, end))
 })
+const pageUnit = computed(() => controlView.value === 'list'
+  ? 'registros'
+  : groupOptions.find(option => option.id === groupBy.value[0])?.unit || 'grupos')
+
+function visibleGroups(groups) {
+  return groups.flatMap(group => expandedGroupKeys.value.has(group.key)
+    ? [group, ...visibleGroups(group.children)]
+    : [group])
+}
+
+function toggleGroupDetails(key) {
+  const expanded = new Set(expandedGroupKeys.value)
+  if (expanded.has(key)) expanded.delete(key)
+  else expanded.add(key)
+  expandedGroupKeys.value = expanded
+}
 
 function exportControlCsv() {
   if (!filteredRecords.value.length) return
@@ -286,10 +391,7 @@ function exportControlCsv() {
 function historyRowsForRecord(record) {
   if (!record) return []
   const target = targetFromRule(record.rule)
-  return movements.value
-    .filter(movement => movementPersonMatches(movement, record.person) && targetMatchesMovement(target, movement))
-    .slice()
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
+  return matchingMovements(movementsForPerson.value(record.person), target)
 }
 
 const selectedHistoryRows = computed(() => historyRowsForRecord(historyRecord.value))
@@ -362,16 +464,22 @@ async function saveHistoryEdit() {
   success('Retirada de EPI atualizada.')
 }
 
-watch([filteredRecords, pageSize], () => {
+watch([entryCount, pageSize], () => {
   if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
 })
 
-watch([search, statusFilters, personStatusFilter], () => {
+watch([search, statusFilters, personStatusFilter, controlView, groupBy], () => {
   currentPage.value = 1
+  expandedGroupKeys.value = new Set()
 })
 
 function quickMovement(record) {
   const exact = resolveQuickTarget(record.rule)
+  if (record.rule.allowedCas || record.rule.requiredAttributes) {
+    selectedRecordKeys.value = [recordKey(record)]
+    openBulkDelivery()
+    return
+  }
   emit('quick-movement', {
     type: 'saida',
     itemId: exact?.item?.id,
@@ -432,9 +540,7 @@ function openBulkDelivery() {
 
 function selectedRowForRecord(record) {
   const variationId = bulkChoices.value[recordKey(record)]
-  const variation = variations.value.find(row => row.id === variationId)
-  const item = variation ? itemById.value.get(variation.itemId) : null
-  return variation && item ? { variation, item } : null
+  return targetRows(record.rule).find(row => row.variation.id === variationId) || null
 }
 
 const bulkValidation = computed(() => {
@@ -508,11 +614,35 @@ async function submitBulkDelivery() {
       </div>
     </header>
 
+    <nav class="flex flex-wrap items-center gap-2" aria-label="Visualização do controle de EPIs">
+      <AppButton :variant="controlView === 'list' ? 'primary' : 'secondary'" size="sm" :aria-pressed="controlView === 'list'" @click="controlView = 'list'">Lista</AppButton>
+      <AppButton :variant="controlView === 'grouped' ? 'primary' : 'secondary'" size="sm" :aria-pressed="controlView === 'grouped'" @click="controlView = 'grouped'">Agrupado</AppButton>
+      <div v-if="controlView === 'grouped'" role="group" aria-label="Agrupar por" class="flex flex-wrap items-center gap-1.5 sm:ml-2">
+        <span class="mr-1 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">Agrupar por</span>
+        <button
+          v-for="option in groupOptions"
+          :key="option.id"
+          type="button"
+          class="inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors"
+          :class="groupBy.includes(option.id)
+            ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
+            : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+          :aria-pressed="groupBy.includes(option.id)"
+          @click="toggleGroupBy(option.id)"
+        >
+          <span v-if="groupBy.includes(option.id)" class="inline-grid h-4 w-4 place-items-center rounded-full bg-current/10 text-[10px] tabular-nums" :aria-label="`Nível ${groupBy.indexOf(option.id) + 1}`">
+            {{ groupBy.indexOf(option.id) + 1 }}
+          </span>
+          {{ option.label }}
+        </button>
+      </div>
+    </nav>
+
     <div class="epi-control-panel overflow-hidden">
       <div class="epi-control-toolbar">
         <div class="ds-query-bar epi-control-search" role="search" aria-label="Pesquisar controle de EPIs">
           <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path stroke-linecap="round" d="m16 16 4 4" /></svg>
-          <input v-model="search" type="search" class="ds-query-input" aria-label="Buscar pessoa, cargo ou EPI" placeholder="Buscar pessoa, cargo ou EPI..." />
+          <input v-model="search" type="search" class="ds-query-input" aria-label="Buscar pessoa, cargo, setor ou EPI" placeholder="Buscar pessoa, cargo, setor ou EPI..." />
         </div>
         <label class="epi-control-person-filter">
           <span>Pessoas</span>
@@ -524,7 +654,7 @@ async function submitBulkDelivery() {
           <AppButton variant="ghost" size="sm"
             :disabled="!filteredRecords.length"
             :aria-pressed="allVisibleSelected" @click="toggleVisibleRecords">
-            {{ allVisibleSelected ? 'Limpar seleção' : 'Selecionar resultados' }}
+            {{ allVisibleSelected ? 'Limpar seleção' : 'Selecionar EPIs dos resultados' }}
           </AppButton>
           <AppButton v-if="selectedRecords.length" variant="primary" size="sm" @click="openBulkDelivery">
             Registrar reposições ({{ selectedRecords.length }})
@@ -537,101 +667,121 @@ async function submitBulkDelivery() {
           {{ tab.label }} <span>{{ tab.count }}</span>
         </button>
       </div>
-      <div class="overflow-x-auto">
-        <table class="w-full min-w-[780px] text-sm">
-          <thead>
-            <tr class="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
-              <th class="px-3 py-2 text-left font-semibold">Pessoa</th>
-              <th class="px-3 py-2 text-left font-semibold">EPI e periodicidade</th>
-              <th class="px-3 py-2 text-left font-semibold">Motivo de uso</th>
-              <th class="px-3 py-2 text-left font-semibold">Situação</th>
-              <th class="w-px whitespace-nowrap px-3 py-2 text-center font-semibold">Ações</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-            <tr v-if="!filteredRecords.length">
-              <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-                Nenhum EPI encontrado para os filtros selecionados.
-              </td>
-            </tr>
-            <tr
-              v-for="record in paginatedRecords"
-              :key="`${record.person.id}:${record.rule.id}`"
-              class="hover:bg-gray-50/70 dark:hover:bg-gray-800/40"
-              :class="selectedRecordKeys.includes(recordKey(record)) ? 'bg-primary-50/50 dark:bg-primary-900/10' : ''"
-            >
-              <td class="px-3 py-2">
-                <p class="font-semibold text-gray-900 dark:text-gray-100">{{ record.person.name }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ record.person.role || '-' }}
-                  <span v-if="record.person.status !== 'ativo'"> · {{ personStatusLabel(record.person.status) }}</span>
-                </p>
-              </td>
-              <td class="px-3 py-2">
-                <template v-if="targetVariationRow(record.rule)">
-                  <p class="font-medium text-gray-900 dark:text-gray-100">{{ targetVariationRow(record.rule).item.name }}</p>
-                  <AttributeBadges class="mt-1" :item="targetVariationRow(record.rule).item" :variation="targetVariationRow(record.rule).variation" compact />
-                </template>
-                <p v-else class="font-medium text-gray-900 dark:text-gray-100">{{ readableTargetLabel(record.rule) }}</p>
-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ targetTypeLabels[record.rule.targetType] }}<template v-if="record.period"> · troca a cada {{ record.period.days }} dias</template>
-                </p>
-              </td>
-              <td class="px-3 py-2">
-                <p class="max-w-xs whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">{{ record.rule.usageReason || 'Não informado' }}</p>
-              </td>
-              <td class="px-3 py-2">
-                <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="statusConfig[record.status].pill">
-                  {{ statusConfig[record.status].label }}
-                </span>
-                <p class="mt-1.5 text-xs text-gray-600 dark:text-gray-300">
-                  Última saída: <strong>{{ formatDate(record.movement?.date) }}</strong>
-                  <template v-if="record.dueDate"> · vence: <strong>{{ formatDate(record.dueDate) }}</strong></template>
-                </p>
-              </td>
-              <td class="px-3 py-2 text-right">
-                <div class="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
+      <div class="divide-y divide-gray-100 dark:divide-gray-800">
+        <p v-if="!entryCount" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+          {{ controlView === 'grouped' && !groupBy.length
+            ? 'Escolha os níveis na ordem em que quer abrir os grupos.'
+            : 'Nenhum EPI encontrado para os filtros selecionados.' }}
+        </p>
+        <div v-for="group in pageGroups" v-show="entryCount" :key="group.key">
+          <button
+            v-if="controlView === 'grouped'"
+            type="button"
+            class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800/40"
+            :style="{ paddingInlineStart: `${1 + group.depth * 1.25}rem` }"
+            :aria-expanded="expandedGroupKeys.has(group.key)"
+            @click="toggleGroupDetails(group.key)"
+          >
+            <span class="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100">{{ group.label }}</span>
+            <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ group.records.length }} {{ group.records.length === 1 ? 'registro' : 'registros' }}</span>
+            <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-gray-500 transition-transform" :class="{ 'rotate-180': expandedGroupKeys.has(group.key) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          <div v-if="!group.children.length && (controlView === 'list' || expandedGroupKeys.has(group.key))" :class="controlView === 'grouped' ? 'border-t border-gray-200 dark:border-gray-800' : ''">
+            <div class="overflow-x-auto">
+            <table class="w-full min-w-[700px] text-sm" :aria-label="group.label ? `EPIs · ${group.label}` : 'Lista de EPIs'">
+              <thead>
+                <tr class="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
+                  <th v-if="showPersonColumn" class="px-3 py-2 text-left font-semibold">Pessoa</th>
+                  <th class="px-3 py-2 text-left font-semibold">EPI e periodicidade</th>
+                  <th class="px-3 py-2 text-left font-semibold">Motivo de uso</th>
+                  <th class="px-3 py-2 text-left font-semibold">Situação</th>
+                  <th class="w-px whitespace-nowrap px-3 py-2 text-center font-semibold">Ações</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                <tr
+                  v-for="record in group.records"
+                  :key="recordKey(record)"
+                  class="hover:bg-gray-50/70 dark:hover:bg-gray-800/40"
+                  :class="selectedRecordKeys.includes(recordKey(record)) ? 'bg-primary-50/50 dark:bg-primary-900/10' : ''"
+                >
+                  <td v-if="showPersonColumn" class="px-3 py-2">
+                    <p class="font-semibold text-gray-900 dark:text-gray-100">{{ record.person.name }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{ record.person.role || '-' }}
+                      <span v-if="record.person.status !== 'ativo'"> · {{ personStatusLabel(record.person.status) }}</span>
+                    </p>
+                  </td>
+                  <td class="px-3 py-2">
+                    <template v-if="targetVariationRow(record.rule)">
+                      <p class="font-medium text-gray-900 dark:text-gray-100">{{ targetVariationRow(record.rule).item.name }}</p>
+                      <AttributeBadges class="mt-1" :item="targetVariationRow(record.rule).item" :variation="targetVariationRow(record.rule).variation" compact />
+                    </template>
+                    <p v-else class="font-medium text-gray-900 dark:text-gray-100">{{ readableTargetLabel(record.rule) }}</p>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ targetTypeLabels[record.rule.targetType] }}<template v-if="record.period"> · troca a cada {{ record.period.days }} dias</template>
+                    </p>
+                  </td>
+                  <td class="px-3 py-2">
+                    <p class="max-w-xs whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">{{ record.rule.usageReason || 'Não informado' }}</p>
+                  </td>
+                  <td class="px-3 py-2">
+                    <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="statusConfig[record.status].pill">
+                      {{ statusConfig[record.status].label }}
+                    </span>
+                    <p class="mt-1.5 text-xs text-gray-600 dark:text-gray-300">
+                      Última saída: <strong>{{ formatDate(record.movement?.date) }}</strong>
+                      <template v-if="record.dueDate"> · vence: <strong>{{ formatDate(record.dueDate) }}</strong></template>
+                    </p>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <div class="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
 
-                  <button type="button" class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer" aria-haspopup="dialog" @click="compatibleRecord = record">Itens compatíveis</button>
-                  <button
-                    type="button"
-                    class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer"
-                    @click="openHistory(record)"
-                  >
-                    Histórico
-                  </button>
-                  <button
-                    v-if="canOperate"
-                    type="button"
-                    class="inline-flex h-9 items-center rounded-md bg-primary-600 px-2.5 text-xs font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 cursor-pointer"
-                    @click="quickMovement(record)"
-                  >
-                    Registrar saida
-                  </button>
-                  <button
-                    v-if="canOperate"
-                    type="button"
-                    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-xs font-semibold transition-colors"
-                    :class="selectedRecordKeys.includes(recordKey(record))
-                      ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
-                      : 'border-gray-200 text-gray-600 hover:border-primary-400 hover:text-primary-700 dark:border-gray-700 dark:text-gray-300 dark:hover:text-primary-300'"
-                    :aria-pressed="selectedRecordKeys.includes(recordKey(record))"
-                    :aria-label="`${selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar' : 'Selecionar'} reposição de ${readableTargetLabel(record.rule)} para ${record.person.name}`"
-                    :title="selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar reposição' : 'Selecionar reposição'"
-                    @click="toggleRecord(record)"
-                  >
-                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle cx="12" cy="12" r="9" />
-                      <path v-if="selectedRecordKeys.includes(recordKey(record))" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.25 2.25L15.5 9.5" />
-                    </svg>
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                      <button type="button" class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer" aria-haspopup="dialog" @click="compatibleRecord = record">Itens compatíveis</button>
+                      <button
+                        type="button"
+                        class="inline-flex h-9 items-center rounded-md border border-gray-200 px-2.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 cursor-pointer"
+                        @click="openHistory(record)"
+                      >
+                        Histórico
+                      </button>
+                      <button
+                        v-if="canOperate"
+                        type="button"
+                        class="inline-flex h-9 items-center rounded-md bg-primary-600 px-2.5 text-xs font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 cursor-pointer"
+                        @click="quickMovement(record)"
+                      >
+                        Registrar saida
+                      </button>
+                      <button
+                        v-if="canOperate"
+                        type="button"
+                        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-xs font-semibold transition-colors"
+                        :class="selectedRecordKeys.includes(recordKey(record))
+                          ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
+                          : 'border-gray-200 text-gray-600 hover:border-primary-400 hover:text-primary-700 dark:border-gray-700 dark:text-gray-300 dark:hover:text-primary-300'"
+                        :aria-pressed="selectedRecordKeys.includes(recordKey(record))"
+                        :aria-label="`${selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar' : 'Selecionar'} reposição de ${readableTargetLabel(record.rule)} para ${record.person.name}`"
+                        :title="selectedRecordKeys.includes(recordKey(record)) ? 'Desmarcar reposição' : 'Selecionar reposição'"
+                        @click="toggleRecord(record)"
+                      >
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle cx="12" cy="12" r="9" />
+                          <path v-if="selectedRecordKeys.includes(recordKey(record))" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.25 2.25L15.5 9.5" />
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </div>
 
-        <div v-if="filteredRecords.length" class="flex items-center justify-between border-t border-gray-200 bg-gray-50/70 px-4 py-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
+        <div v-if="entryCount" class="flex items-center justify-between border-t border-gray-200 bg-gray-50/70 px-4 py-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
           <div class="flex items-center gap-2">
             <span>Exibir</span>
             <select v-model.number="pageSize" class="rounded-lg border border-gray-200 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">
@@ -640,8 +790,8 @@ async function submitBulkDelivery() {
               <option :value="40">40</option>
               <option :value="80">80</option>
             </select>
-            <span>por pagina</span>
-            <span>{{ filteredRecords.length }} registros</span>
+            <span>{{ pageUnit }} por página</span>
+            <span>{{ entryCount }} {{ pageUnit }}</span>
           </div>
           <div class="flex items-center gap-1">
             <button type="button" class="rounded-lg px-2 py-1 hover:bg-gray-200 disabled:opacity-40 dark:hover:bg-gray-700" :disabled="currentPage <= 1" @click="currentPage--">Anterior</button>

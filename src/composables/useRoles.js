@@ -26,7 +26,7 @@ export function useRoles() {
     sortByName(roles.value.filter(r => r.active))
   )
 
-  async function addRole(name, description = '') {
+  async function addRole(name, description = '', sector = '') {
     const trimmed = formatRoleName(name)
     if (!trimmed) return { ok: false, error: 'Nome obrigatório.' }
     if (roles.value.some(r => roleNameKey(r.name) === roleNameKey(trimmed))) {
@@ -35,6 +35,7 @@ export function useRoles() {
     const created = await api.createRole({
       name: trimmed,
       description: description.trim(),
+      sector: sector.trim(),
       active: true,
     })
     roles.value.push(created)

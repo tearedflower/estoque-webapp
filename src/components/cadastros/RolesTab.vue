@@ -16,10 +16,13 @@ const isDev = computed(() =>
 
 const newRoleName = ref('')
 const newRoleDesc = ref('')
+const newRoleSector = ref('')
 const addingRole = ref(false)
 const editingRoleId = ref(null)
 const editRoleName = ref('')
 const editRoleDesc = ref('')
+const editRoleSector = ref('')
+const existingSectors = computed(() => [...new Set(roles.value.map(role => role.sector).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')))
 const roleSearch = ref('')
 const roleStatusFilter = ref('all')
 const currentPage = ref(1)
@@ -45,7 +48,7 @@ const filteredRoles = computed(() =>
     .filter(role => {
       const q = normalizeSearch(roleSearch.value)
       if (!q) return true
-      return [role.name, role.description, role.active ? 'ativo' : 'inativo']
+      return [role.name, role.description, role.sector, role.active ? 'ativo' : 'inativo']
         .some(value => normalizeSearch(value).includes(q))
     })
 )
@@ -69,13 +72,13 @@ watch(totalPages, total => {
   if (currentPage.value > total) currentPage.value = total
 })
 
-function startAddRole() { addingRole.value = true; newRoleName.value = ''; newRoleDesc.value = '' }
+function startAddRole() { addingRole.value = true; newRoleName.value = ''; newRoleDesc.value = ''; newRoleSector.value = '' }
 function cancelAddRole() { addingRole.value = false }
 async function confirmAddRole() {
   if (!canAddRole.value) return
   roleSaving.value = true
   try {
-    const r = await addRole(newRoleName.value, newRoleDesc.value)
+    const r = await addRole(newRoleName.value, newRoleDesc.value, newRoleSector.value)
     if (!r.ok) { error(r.error); return }
     success('Cargo adicionado.')
     addingRole.value = false
@@ -88,13 +91,14 @@ function startEditRole(r) {
   editingRoleId.value = r.id
   editRoleName.value = r.name
   editRoleDesc.value = r.description || ''
+  editRoleSector.value = r.sector || ''
 }
 function cancelEditRole() { editingRoleId.value = null }
 async function confirmEditRole() {
   if (!canEditRole.value) return
   roleSaving.value = true
   try {
-    const r = await editRole(editingRoleId.value, { name: editRoleName.value, description: editRoleDesc.value })
+    const r = await editRole(editingRoleId.value, { name: editRoleName.value, description: editRoleDesc.value, sector: editRoleSector.value })
     if (!r.ok) { error(r.error); return }
     await loadPeople()
     success('Cargo atualizado.')
@@ -201,6 +205,9 @@ function normalizeSearch(value) {
       </div>
     </div>
 
+    <datalist id="role-sectors">
+      <option v-for="sector in existingSectors" :key="sector" :value="sector" />
+    </datalist>
     <div v-if="addingRole" class="mb-4 flex flex-col gap-3 rounded-xl border border-primary-300 bg-primary-50/40 p-4 dark:border-primary-700 dark:bg-primary-900/10">
       <p class="text-xs font-semibold text-primary-600 dark:text-primary-400">Novo cargo</p>
       <input
@@ -218,6 +225,7 @@ function normalizeSearch(value) {
         @keydown.enter="confirmAddRole"
         @keydown.escape="cancelAddRole"
       />
+      <input v-model="newRoleSector" aria-label="Setor" placeholder="Setor (opcional)" class="ds-input" list="role-sectors" maxlength="100" @keydown.enter="confirmAddRole" @keydown.escape="cancelAddRole" />
       <p v-if="!newRoleName.trim()" class="text-xs text-amber-600 dark:text-amber-400">Informe o nome do cargo.</p>
       <div class="flex gap-2">
         <button
@@ -287,6 +295,7 @@ function normalizeSearch(value) {
         <thead>
           <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Cargo</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Setor</th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Descrição</th>
             <th class="w-24 px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</th>
             <th class="w-32 px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Ações</th>
@@ -307,6 +316,9 @@ function normalizeSearch(value) {
                 <input v-model="editRoleName" class="w-full rounded border border-primary-400 bg-white px-2 py-1 text-sm text-gray-800 focus:outline-none dark:border-primary-500 dark:bg-gray-700 dark:text-gray-100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" autofocus />
               </td>
               <td class="px-4 py-2">
+                <input v-model="editRoleSector" aria-label="Setor" placeholder="Setor (opcional)" class="ds-input" list="role-sectors" maxlength="100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" />
+              </td>
+              <td class="px-4 py-2">
                 <input v-model="editRoleDesc" placeholder="Descrição..." class="w-full rounded border border-primary-400 bg-white px-2 py-1 text-sm text-gray-800 focus:outline-none dark:border-primary-500 dark:bg-gray-700 dark:text-gray-100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" />
               </td>
               <td colspan="2" class="px-4 py-2">
@@ -321,7 +333,10 @@ function normalizeSearch(value) {
               </td>
             </template>
             <template v-else>
-              <td class="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">{{ r.name }}</td>
+              <td class="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">
+                {{ r.name }}
+              </td>
+              <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ r.sector || '—' }}</td>
               <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ r.description || '—' }}</td>
               <td class="px-4 py-3 text-center">
                 <button
