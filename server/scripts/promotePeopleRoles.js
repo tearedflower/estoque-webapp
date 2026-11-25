@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { argValue, resolveEnvPath } from '../env.js'
-import { formatPersonName, formatRoleName } from '../../src/utils/nameFormat.js'
+import { formatPersonName, formatRoleName, roleNameKey } from '../../src/utils/nameFormat.js'
 
 export const PROMOTE_CONFIRMATION = 'ENVIAR_PESSOAS_CARGOS_PARA_PROD'
 const PERSON_STATUSES = new Set(['ativo', 'inativo', 'demitido', 'afastado'])
@@ -95,7 +95,7 @@ export async function promotePeopleRoles({ devPath, prodPath, backupDir = join(d
     const prodPeople = prod.prepare('SELECT id, name FROM people').all()
     const usedRoleIds = new Set(prodRoles.map(row => row.id))
     const usedPersonIds = new Set(prodPeople.map(row => row.id))
-    const roleByName = new Map(prodRoles.map(row => [key(row.name), row]))
+    const roleByName = new Map(prodRoles.map(row => [roleNameKey(row.name), row]))
     const personByName = new Map(prodPeople.map(row => [key(row.name), row]))
     const result = { rolesInserted: 0, rolesUpdated: 0, peopleInserted: 0, peopleUpdated: 0, backupPath }
 
@@ -108,14 +108,14 @@ export async function promotePeopleRoles({ devPath, prodPath, backupDir = join(d
       for (const role of devRoles) {
         const name = formatRoleName(role.name)
         if (!name) continue
-        const existing = roleByName.get(key(name))
+        const existing = roleByName.get(roleNameKey(name))
         if (existing) {
           updateRole.run(name, role.description || '', role.active ? 1 : 0, existing.id)
           result.rolesUpdated += 1
         } else {
           const id = chooseId(role.id, 'role', usedRoleIds)
           insertRole.run(id, name, role.description || '', role.active ? 1 : 0)
-          roleByName.set(key(name), { id, name })
+          roleByName.set(roleNameKey(name), { id, name })
           result.rolesInserted += 1
         }
       }

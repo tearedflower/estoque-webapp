@@ -37,7 +37,13 @@ server/photo-uploads*/
 public/local-brand/
 public/themes/*.css
 !public/themes/industrial.css
-graphify-out/
+graphify-out/*
+!graphify-out/graph.json
+!graphify-out/graph.html
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/manifest.json
+!graphify-out/.graphify_labels.json
+!graphify-out/.graphify_labels.json.sig
 importar_banco.py
 test_importar_banco.py
 requirements-importar-banco.txt
@@ -49,3 +55,7 @@ entrada_saida_produtos.xlsx
 # Notas de features futuras
 features.md
 
+
+# Browser test artifacts
+playwright-report/
+test-results/

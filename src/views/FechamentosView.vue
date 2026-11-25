@@ -4,6 +4,7 @@ import { useClosings } from '../composables/useClosings.js'
 import { useDestinations } from '../composables/useDestinations.js'
 import { useToast } from '../composables/useToast.js'
 import AppModal from '../components/ui/AppModal.vue'
+import { closingInconsistencyCount, previousMonthPeriod } from '../utils/closingAutomation.js'
 
 const isAdmin = inject('isAdmin')
 const { closings, closingDetails, createClosing, deleteClosing, loadClosing, previewClosing } = useClosings()
@@ -11,8 +12,9 @@ const { getDestFullName } = useDestinations()
 const { success, error } = useToast()
 
 const now = new Date()
-const selectedMonth = ref(now.getMonth() + 1)
-const selectedYear = ref(now.getFullYear())
+const defaultPeriod = previousMonthPeriod(now)
+const selectedMonth = ref(defaultPeriod.month)
+const selectedYear = ref(defaultPeriod.year)
 const notes = ref('')
 const selectedClosingId = ref('')
 const loading = ref(false)
@@ -21,6 +23,7 @@ const exporting = ref(false)
 const preview = ref(null)
 const previewOpen = ref(false)
 const previewLoading = ref(false)
+const autoPreparedPeriod = ref('')
 
 const MONTHS = [
   { value: 1, label: 'Janeiro' },
@@ -55,18 +58,26 @@ const selectedDetail = computed(() => {
 const existingPeriodClosing = computed(() => closings.value.find(closing =>
   closing.year === selectedYear.value && closing.month === selectedMonth.value
 ) || null)
+const previewIssueCount = computed(() => closingInconsistencyCount(preview.value || {}))
+const isPreviousMonthSelected = computed(() =>
+  selectedYear.value === defaultPeriod.year && selectedMonth.value === defaultPeriod.month
+)
 
-async function handlePreview() {
+async function preparePreview({ open = false } = {}) {
   if (!isAdmin?.value || previewLoading.value) return
   previewLoading.value = true
   try {
     preview.value = await previewClosing(selectedYear.value, selectedMonth.value)
-    previewOpen.value = true
+    previewOpen.value = open
   } catch (e) {
     error(e.message)
   } finally {
     previewLoading.value = false
   }
+}
+
+async function handlePreview() {
+  await preparePreview({ open: true })
 }
 
 const attentionRows = computed(() => {
@@ -103,6 +114,18 @@ async function selectClosing(closing) {
 watch(closings, list => {
   if (!selectedClosingId.value && list.length) selectClosing(list[0]).catch(() => {})
 }, { immediate: true })
+
+watch(
+  [closings, () => isAdmin?.value, selectedYear, selectedMonth],
+  () => {
+    preview.value = null
+    const key = `${selectedYear.value}-${selectedMonth.value}`
+    if (!isAdmin?.value || existingPeriodClosing.value || autoPreparedPeriod.value === key) return
+    autoPreparedPeriod.value = key
+    preparePreview().catch(() => {})
+  },
+  { immediate: true }
+)
 
 async function handleCreate() {
   if (!isAdmin?.value) return
@@ -211,7 +234,7 @@ function rowsToCsv(rows) {
     row.stockAtClose || 0,
     row.monthEntradas || 0,
     row.monthSaidas || 0,
-    row.minStock || 0,
+    row.minStock ?? '',
     closingStatus(row),
     row.location || '',
     destinationsText(row),
@@ -248,6 +271,28 @@ async function handleExportDetails() {
 
 <template>
   <div class="ds-page-stack">
+    <section
+      v-if="isAdmin && isPreviousMonthSelected && !existingPeriodClosing"
+      class="rounded-xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/50 dark:bg-amber-900/10"
+    >
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p class="font-semibold text-amber-900 dark:text-amber-100">Fechamento do mês anterior pendente</p>
+          <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
+            {{ previewLoading ? 'Preparando a prévia automaticamente...' : preview ? `Prévia pronta: ${preview.movementCount} movimentações e ${previewIssueCount} inconsistências para revisar.` : 'A prévia será preparada automaticamente.' }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="ds-segmented-item ds-segmented-item-active min-h-[38px] justify-center"
+          :disabled="previewLoading"
+          @click="preview ? previewOpen = true : handlePreview()"
+        >
+          Revisar e confirmar
+        </button>
+      </div>
+    </section>
+
     <section class="ds-toolbar">
       <div class="grid grid-cols-1 md:grid-cols-[160px_120px_minmax(220px,1fr)_auto] gap-3 w-full items-end">
         <label>
@@ -398,6 +443,17 @@ async function handleExportDetails() {
           <div class="ds-metric"><p class="ds-metric-label">Saídas</p><p class="ds-metric-value text-red-500">{{ preview.monthSaidas }}</p></div>
           <div class="ds-metric"><p class="ds-metric-label">Sem estoque</p><p class="ds-metric-value text-red-500">{{ preview.zeroStock }}</p></div>
           <div class="ds-metric"><p class="ds-metric-label">Abaixo do mínimo</p><p class="ds-metric-value text-amber-500">{{ preview.belowMin }}</p></div>
+        </div>
+        <div
+          v-if="previewIssueCount"
+          class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-100"
+        >
+          <p class="font-semibold">{{ previewIssueCount }} inconsistência(s) para revisar</p>
+          <ul class="mt-2 space-y-1">
+            <li>Saldo negativo: {{ preview.inconsistencies?.negativeStock || 0 }}</li>
+            <li>Cálculo de saldo divergente: {{ preview.inconsistencies?.movementMath || 0 }}</li>
+            <li>Movimentações com responsável, destino ou fornecedor incompleto: {{ preview.inconsistencies?.partialMovements || 0 }}</li>
+          </ul>
         </div>
         <dl class="grid grid-cols-2 gap-2 text-xs ds-muted">
           <div><dt>Movimentações</dt><dd class="mt-0.5 font-semibold text-gray-900 dark:text-gray-100">{{ preview.movementCount }}</dd></div>

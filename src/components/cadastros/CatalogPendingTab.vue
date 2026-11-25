@@ -129,9 +129,9 @@ function toggleStatus(id) {
       </div>
     </div>
 
-    <div class="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+    <div class="ds-table-wrap">
       <div v-if="paginatedRows.length" class="overflow-x-auto">
-        <table class="min-w-[760px] w-full text-sm">
+        <table class="ds-table min-w-[760px]">
           <thead class="bg-gray-50 dark:bg-gray-800/60">
             <tr class="border-b border-gray-200 dark:border-gray-700">
               <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Material</th>

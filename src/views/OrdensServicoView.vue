@@ -18,6 +18,9 @@ import { formatPartialOrderDate, workOrderCreationDateError } from '../utils/wor
 import { workOrderMaintenanceKindLabel, workOrderMaintenanceSearchParts } from '../utils/workOrderSearch.js'
 import { normalizeSearchText as normalizeText, searchTokens as textTokens } from '../utils/globalSearch.js'
 
+import { formatDate, formatDateOnly, formatTimeOnly, formatDateTimeParts, maintenancePeriod, maintenanceEndLabel, maintenanceObservation, motorOrderTitle, maintenanceLocationLabel, maintenanceLocationTypeLabel, orderDisplayTitle, variationLabel, hierarchyLabel } from '../utils/workOrderPresentation.js'
+import { serializeCsv } from '../utils/csv.js'
+
 const props = defineProps({
   mode: { type: String, default: 'general' },
   embedded: { type: Boolean, default: false },
@@ -84,7 +87,7 @@ const OS_FILTER_STATE_KEY = computed(() => `estoque_os_filters_${props.mode || '
 
 function loadOsFilterState() {
   try {
-    return JSON.parse(localStorage.getItem(OS_FILTER_STATE_KEY.value) || '{}')
+    return JSON.parse(sessionStorage.getItem(OS_FILTER_STATE_KEY.value) || '{}')
   } catch {
     return {}
   }
@@ -166,7 +169,7 @@ watch(quickKeepValues, (keep) => {
 })
 
 watch([searchQuery, ordersStatusTab, motorFilterId, historyDateFrom, historyDateTo], () => {
-  localStorage.setItem(OS_FILTER_STATE_KEY.value, JSON.stringify({
+  sessionStorage.setItem(OS_FILTER_STATE_KEY.value, JSON.stringify({
     searchQuery: searchQuery.value,
     ordersStatusTab: ordersStatusTab.value,
     motorFilterId: motorFilterId.value,
@@ -1340,6 +1343,7 @@ const matParsedQty = computed(() => {
 const matExceedsStock = computed(() =>
   matParsedQty.value !== null &&
   matSelectedVariation.value !== null &&
+  matSelectedVariation.value.stockConfirmed !== false &&
   matParsedQty.value > matSelectedVariation.value.stock
 )
 
@@ -1577,10 +1581,6 @@ function clearHistoryFilters() {
   historyDateTo.value = ''
 }
 
-function csvCell(value) {
-  const text = String(value ?? '').replace(/\r?\n/g, ' ').trim()
-  return `"${text.replace(/"/g, '""')}"`
-}
 
 function csvDateStamp() {
   const d = new Date()
@@ -1640,8 +1640,7 @@ function downloadCsv(filename, rows) {
     showError('Nenhuma OS para exportar.')
     return
   }
-  const csv = rows.map(row => row.map(csvCell).join(';')).join('\r\n')
-  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob([serializeCsv(rows)], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -2159,49 +2158,11 @@ watch(activeSubTab, (tab) => {
 })
 
 // ===== Helpers =====
-function formatDate(iso) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '-'
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
 
-function formatDateOnly(value) {
-  if (!value) return '-'
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split('-')
-    return `${day}/${month}/${year}`
-  }
-  return formatDate(value).split(' ')[0]
-}
 
-function formatTimeOnly(value) {
-  return value || '-'
-}
 
-function formatDateTimeParts(date, time, fallback) {
-  if (date && time) return `${formatDateOnly(date)} ${formatTimeOnly(time)}`
-  if (date) return formatDateOnly(date)
-  if (time) return formatTimeOnly(time)
-  return formatDate(fallback)
-}
 
-function maintenancePeriod(order) {
-  const start = formatDateTimeParts(order.maintenanceStartDate, order.maintenanceStartTime, '')
-  const end = formatDateTimeParts(order.maintenanceEndDate, order.maintenanceEndTime, '')
-  if (start === '-' && end === '-') return '-'
-  if (end === '-') return `${start} até em aberto`
-  return `${start} até ${end}`
-}
 
-function maintenanceEndLabel(order) {
-  if (order.maintenanceEndDate && order.maintenanceEndTime) {
-    return formatDateTimeParts(order.maintenanceEndDate, order.maintenanceEndTime, '')
-  }
-  if (order.maintenanceEndDate) return formatDateOnly(order.maintenanceEndDate)
-  return 'Em aberto'
-}
 
 function orderStatusLabel(order) {
   return isOrderFinished(order) ? 'Finalizada' : 'Aberta'
@@ -2213,15 +2174,7 @@ function orderStatusClass(order) {
     : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
 }
 
-function maintenanceObservation(order) {
-  return order.maintenanceNote || order.note || '-'
-}
 
-function motorOrderTitle(order) {
-  if (!order.motorId) return ''
-  const tag = order.motorTag || order.equipment || 'Sem tag'
-  return `${tag}${order.motorName ? ` - ${order.motorName}` : ''}`
-}
 
 function motorOrderEventLabel(order) {
   if (!order?.motorId) return ''
@@ -2234,24 +2187,8 @@ function motorOrderEventLabel(order) {
   return label === 'Enrolar' ? 'Enrolado' : label
 }
 
-function maintenanceLocationLabel(order) {
-  return order.maintenanceLocationName ||
-    order.maintenanceDestinationName ||
-    order.maintenanceExternalLocation ||
-    order.destinationName ||
-    '-'
-}
 
-function maintenanceLocationTypeLabel(order) {
-  if (order.maintenanceLocationType === 'interna') return 'Interna'
-  if (order.maintenanceLocationType === 'externa') return 'Externa'
-  return order.motorId ? '-' : ''
-}
 
-function orderDisplayTitle(order) {
-  if (order.motorId) return motorOrderTitle(order)
-  return order.equipment || order.destinationName || order.title || 'Sem equipamento'
-}
 
 function orderHistoryLocationLabel(order) {
   const label = order.motorId ? maintenanceLocationLabel(order) : order.destinationName
@@ -2261,15 +2198,7 @@ function orderHistoryLocationLabel(order) {
   return normalizeText(visibleLabel) === normalizeText(orderDisplayTitle(order)) ? '' : visibleLabel
 }
 
-function variationLabel(v) {
-  const vals = v.variationValues || v.values || {}
-  const parts = Object.entries(vals).map(([k, val]) => `${k}: ${val}`).filter(Boolean)
-  return parts.length ? parts.join(' - ') : '-'
-}
 
-function hierarchyLabel(item) {
-  return [item.group, item.category, item.subcategory].filter(Boolean).join(' > ')
-}
 
 function toggleOrder(id) {
   expandedOrderId.value = expandedOrderId.value === id ? null : id
@@ -2376,6 +2305,7 @@ function matBackToStep2() {
     </div>
 
     <SectionTabs
+      route-tab="ordens"
       v-if="!createOnly"
       aria-label="Seções de ordens de serviço"
       :model-value="activeSubTab"
@@ -2967,7 +2897,7 @@ function matBackToStep2() {
               <span class="text-xs text-red-600 dark:text-red-400">Confirmar?</span>
               <button
                 type="button"
-                class="min-h-10 px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded"
+                class="min-h-10 px-3 py-1 text-xs font-medium text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] rounded"
                 @click.stop="handleDeleteOS(order.id)"
               >
                 Sim
@@ -3370,7 +3300,7 @@ function matBackToStep2() {
                 </button>
                 <template v-else-if="isAdmin">
                   <span class="text-xs text-red-600 dark:text-red-400">Confirmar exclusão?</span>
-                  <button class="px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded" @click="handleDeleteOS(order.id)">Sim</button>
+                  <button class="px-2 py-1 text-xs font-medium text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] rounded" @click="handleDeleteOS(order.id)">Sim</button>
                   <button class="px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" @click="confirmDeleteId = null">Não</button>
                 </template>
               </div>
@@ -3489,7 +3419,7 @@ function matBackToStep2() {
                     </div>
                     <button
                       :disabled="!matParsedQty || matExceedsStock"
-                      class="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                      class="px-4 py-2 text-sm font-medium text-white bg-[var(--ds-success-solid)] hover:bg-[var(--ds-success-hover)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
                       @click="handleAddMaterial"
                     >Adicionar</button>
                   </div>
@@ -3524,7 +3454,7 @@ function matBackToStep2() {
                             @click="confirmRemoveItemId = mat.id"
                           >Remover</button>
                           <span v-else class="inline-flex items-center gap-1">
-                            <button class="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded" @click="handleRemoveMaterial(order.id, mat.id)">Sim</button>
+                            <button class="text-xs text-white bg-[var(--ds-danger-solid)] hover:bg-[var(--ds-danger-hover)] px-2 py-0.5 rounded" @click="handleRemoveMaterial(order.id, mat.id)">Sim</button>
                             <button class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-0.5" @click="confirmRemoveItemId = null">Não</button>
                           </span>
                         </td>
@@ -3716,17 +3646,21 @@ function matBackToStep2() {
 
       <div v-else class="space-y-2">
         <div
-          v-for="dest in visibleReport"
+          v-for="(dest, reportIndex) in visibleReport"
           :key="dest.destinationName"
           class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
         >
-          <div
-            class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+          <button
+            type="button"
+            class="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+            :aria-expanded="expandedReportDest === dest.destinationName"
+            :aria-controls="`os-report-${reportIndex}`"
             @click="expandedReportDest = expandedReportDest === dest.destinationName ? null : dest.destinationName"
           >
             <svg
-              class="w-4 h-4 text-gray-400 transition-transform flex-shrink-0"
+              class="w-4 h-4 text-gray-400 transition-transform motion-reduce:transition-none flex-shrink-0"
               :class="expandedReportDest === dest.destinationName ? 'rotate-90' : ''"
+              aria-hidden="true"
               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
             ><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
 
@@ -3734,9 +3668,14 @@ function matBackToStep2() {
             <span class="text-xs text-gray-400 dark:text-gray-500">
               {{ dest.orders.length }} OS - {{ (dest.osMaterialTotals || []).length }} materiais em OS
             </span>
-          </div>
+          </button>
 
-          <div v-if="expandedReportDest === dest.destinationName" class="border-t border-gray-200 dark:border-gray-700 px-4 py-3 space-y-4">
+          <div
+            :id="`os-report-${reportIndex}`"
+            class="ds-collapse"
+            :class="{ 'ds-collapse-open': expandedReportDest === dest.destinationName }"
+          >
+          <div class="border-t border-gray-200 dark:border-gray-700 px-4 py-3 space-y-4">
             <div v-if="(dest.osMaterialTotals || []).length">
               <h4 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">{{ isMotorMode ? 'Resumo por oficina/local da OS' : 'Resumo por destino de OS' }}</h4>
               <div class="overflow-x-auto">
@@ -3789,6 +3728,7 @@ function matBackToStep2() {
             </div>
 
             <p v-if="!(dest.osMaterialTotals || []).length" class="text-sm text-gray-400 italic">Nenhum material de OS registrado para este destino</p>
+          </div>
           </div>
         </div>
       </div>
@@ -3873,7 +3813,7 @@ function matBackToStep2() {
                   v-for="group in matGroupOptions"
                   :key="group"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMatGroup(group)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -3893,7 +3833,7 @@ function matBackToStep2() {
                   v-for="category in matCategoryOptions"
                   :key="category"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMatCategory(category)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -3913,7 +3853,7 @@ function matBackToStep2() {
                   v-for="subcategory in matSubcategoryOptions"
                   :key="subcategory"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMatSubcategory(subcategory)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -3933,7 +3873,7 @@ function matBackToStep2() {
                   v-for="item in matItemsForSelection"
                   :key="item.id"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMatCatalogItem(item)"
                 >
                   <p class="mb-1 truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{{ item.name }}</p>
@@ -4040,7 +3980,7 @@ function matBackToStep2() {
                 <button class="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800" @click="matBackToStep2">Cancelar</button>
                 <button
                   :disabled="!matParsedQty || matExceedsStock"
-                  class="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  class="rounded-lg bg-[var(--ds-success-solid)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--ds-success-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                   @click="handleAddMaterial"
                 >Adicionar baixa</button>
               </div>

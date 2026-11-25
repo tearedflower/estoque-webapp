@@ -15,7 +15,7 @@ export const DB_PATH = process.env.DB_PATH
 
 mkdirSync(dirname(DB_PATH), { recursive: true })
 
-const CURRENT_SCHEMA_VERSION = 4
+const CURRENT_SCHEMA_VERSION = 9
 const databaseExisted = existsSync(DB_PATH)
 const db = new Database(DB_PATH)
 const previousSchemaVersion = db.pragma('user_version', { simple: true })
@@ -55,6 +55,7 @@ db.exec(`
     subcategory TEXT,
     unit TEXT NOT NULL DEFAULT 'UN',
     min_stock REAL NOT NULL DEFAULT 0,
+    min_stock_defined INTEGER NOT NULL DEFAULT 0,
     attributes TEXT NOT NULL DEFAULT '[]',
     location TEXT DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1
@@ -66,6 +67,7 @@ db.exec(`
     vals TEXT NOT NULL DEFAULT '{}',
     stock REAL NOT NULL DEFAULT 0,
     min_stock REAL NOT NULL DEFAULT 0,
+    min_stock_defined INTEGER NOT NULL DEFAULT 0,
     initial_stock REAL NOT NULL DEFAULT 0,
     extras TEXT NOT NULL DEFAULT '{}',
     location TEXT DEFAULT '',
@@ -98,7 +100,43 @@ db.exec(`
     doc_ref TEXT DEFAULT '',
     note TEXT DEFAULT '',
     operator_id TEXT DEFAULT '',
-    operator_name TEXT DEFAULT ''
+    operator_name TEXT DEFAULT '',
+    affects_stock INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS stock_confirmations (
+    variation_id TEXT PRIMARY KEY REFERENCES variations(id) ON DELETE CASCADE,
+    previous_stock REAL NOT NULL,
+    counted_stock REAL NOT NULL CHECK(counted_stock >= 0),
+    confirmed_at TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    operator_name TEXT NOT NULL,
+    movement_id TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS movement_audit (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    movement_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('update', 'delete', 'recalculate')),
+    before_json TEXT NOT NULL,
+    after_json TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    operator_id TEXT NOT NULL DEFAULT '',
+    operator_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_movement_audit_id ON movement_audit(movement_id, sequence);
+  CREATE INDEX IF NOT EXISTS idx_movements_date ON movements(date DESC, id);
+  CREATE INDEX IF NOT EXISTS idx_movements_variation_date ON movements(variation_id, date, id);
+  CREATE TABLE IF NOT EXISTS mutation_requests (
+    user_id TEXT NOT NULL,
+    route TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, route, request_key)
   );
 
   CREATE TABLE IF NOT EXISTS movement_batch_requests (
@@ -106,6 +144,13 @@ db.exec(`
     user_id TEXT NOT NULL,
     response_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS movement_import_mappings (
+    name_key TEXT PRIMARY KEY,
+    source_name TEXT NOT NULL,
+    variation_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS photo_batches (
@@ -166,6 +211,7 @@ db.exec(`
     name TEXT NOT NULL UNIQUE,
     role_text TEXT DEFAULT '',
     registration TEXT DEFAULT '',
+    work_hours TEXT NOT NULL DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'ativo' CHECK(status IN ('ativo','inativo','demitido','afastado'))
   );
@@ -182,6 +228,11 @@ db.exec(`
     name TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS epi_role_rules (
@@ -331,6 +382,9 @@ db.prepare(`INSERT OR IGNORE INTO display_order (id, data) VALUES (1, '{}')`).ru
 
 // Migration: add operator columns to movements if missing
 const movCols = db.prepare("PRAGMA table_info(movements)").all().map(c => c.name)
+if (!movCols.includes('revision')) {
+  db.prepare('ALTER TABLE movements ADD COLUMN revision INTEGER NOT NULL DEFAULT 0').run()
+}
 if (!movCols.includes('operator_id')) {
   db.prepare("ALTER TABLE movements ADD COLUMN operator_id TEXT DEFAULT ''").run()
   db.prepare("ALTER TABLE movements ADD COLUMN operator_name TEXT DEFAULT ''").run()
@@ -341,7 +395,14 @@ if (!movCols.includes('unit_cost')) {
 if (!movCols.includes('requested_by_person_id')) {
   db.prepare("ALTER TABLE movements ADD COLUMN requested_by_person_id TEXT DEFAULT ''").run()
 }
+if (!movCols.includes('affects_stock')) {
+  db.prepare('ALTER TABLE movements ADD COLUMN affects_stock INTEGER NOT NULL DEFAULT 1').run()
+}
 const variationCols = db.prepare("PRAGMA table_info(variations)").all().map(c => c.name)
+if (!variationCols.includes('min_stock_defined')) {
+  db.prepare('ALTER TABLE variations ADD COLUMN min_stock_defined INTEGER NOT NULL DEFAULT 0').run()
+  db.prepare('UPDATE variations SET min_stock_defined = 1 WHERE min_stock > 0').run()
+}
 if (!variationCols.includes('locations')) {
   db.prepare("ALTER TABLE variations ADD COLUMN locations TEXT NOT NULL DEFAULT '[]'").run()
   const legacyLocations = db.prepare("SELECT id, location FROM variations WHERE COALESCE(location, '') <> ''").all()
@@ -355,6 +416,10 @@ if (!variationCols.includes('active')) {
 }
 
 const itemCols = db.prepare("PRAGMA table_info(items)").all().map(c => c.name)
+if (!itemCols.includes('min_stock_defined')) {
+  db.prepare('ALTER TABLE items ADD COLUMN min_stock_defined INTEGER NOT NULL DEFAULT 0').run()
+  db.prepare('UPDATE items SET min_stock_defined = 1 WHERE min_stock > 0').run()
+}
 if (!itemCols.includes('active')) {
   db.prepare("ALTER TABLE items ADD COLUMN active INTEGER NOT NULL DEFAULT 1").run()
 }
@@ -382,13 +447,35 @@ if (!peopleCols.includes('status')) {
 if (!peopleCols.includes('registration')) {
   db.prepare("ALTER TABLE people ADD COLUMN registration TEXT DEFAULT ''").run()
 }
+if (!peopleCols.includes('work_hours')) {
+  db.prepare("ALTER TABLE people ADD COLUMN work_hours TEXT NOT NULL DEFAULT ''").run()
+}
+
+if (!db.prepare("PRAGMA table_info(roles)").all().some(column => column.name === 'sector')) {
+  db.prepare("ALTER TABLE roles ADD COLUMN sector TEXT NOT NULL DEFAULT ''").run()
+}
 
 const epiRoleRuleCols = db.prepare("PRAGMA table_info(epi_role_rules)").all().map(c => c.name)
+if (!epiRoleRuleCols.includes('required_attributes')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN required_attributes TEXT').run()
+}
+if (!epiRoleRuleCols.includes('person_id')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN person_id TEXT').run()
+}
+if (!epiRoleRuleCols.includes('allowed_cas')) {
+  db.prepare('ALTER TABLE epi_role_rules ADD COLUMN allowed_cas TEXT').run()
+}
 if (!epiRoleRuleCols.includes('days')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN days INTEGER NOT NULL DEFAULT 30").run()
 }
 if (!epiRoleRuleCols.includes('quantity')) {
   db.prepare("ALTER TABLE epi_role_rules ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1").run()
+}
+if (!epiRoleRuleCols.includes('observation')) {
+  db.prepare("ALTER TABLE epi_role_rules ADD COLUMN observation TEXT NOT NULL DEFAULT ''").run()
+}
+if (!epiRoleRuleCols.includes('usage_reason')) {
+  db.prepare("ALTER TABLE epi_role_rules ADD COLUMN usage_reason TEXT NOT NULL DEFAULT ''").run()
 }
 
 // Migration: add detailed OS fields if missing

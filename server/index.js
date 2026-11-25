@@ -17,12 +17,14 @@ import destinationRoutes from './routes/destinations.js'
 import peopleRoutes from './routes/people.js'
 import supplierRoutes from './routes/suppliers.js'
 import roleRoutes from './routes/roles.js'
+import peopleRoleSyncRoutes from './routes/peopleRoleSync.js'
 import epiRoutes from './routes/epis.js'
 import seedRoutes from './routes/seed.js'
 import workOrderRoutes from './routes/workOrders.js'
 import motorRoutes from './routes/motors.js'
 import closingRoutes from './routes/closings.js'
 import photoBatchRoutes from './routes/photoBatches.js'
+import automationRoutes from './routes/automation.js'
 import { listThemes } from './utils/themes.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -77,12 +79,14 @@ app.use('/api/destinations', destinationRoutes)
 app.use('/api/people', peopleRoutes)
 app.use('/api/suppliers', supplierRoutes)
 app.use('/api/roles', roleRoutes)
+app.use('/api/people-role-sync', peopleRoleSyncRoutes)
 app.use('/api/epis', epiRoutes)
 app.use('/api/seed', seedRoutes)
 app.use('/api/work-orders', workOrderRoutes)
 app.use('/api/motors', motorRoutes)
 app.use('/api/closings', closingRoutes)
 app.use('/api/photo-batches', photoBatchRoutes)
+app.use('/api/automation', automationRoutes)
 app.use('/api', apiErrorHandler)
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 

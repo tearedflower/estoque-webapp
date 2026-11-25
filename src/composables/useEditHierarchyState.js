@@ -20,6 +20,14 @@ const {
 } = useItems()
 
 const { success, error } = useToast()
+const reorderingAttributes = ref(false)
+async function moveAttribute(itemId, from, to) {
+  if (reorderingAttributes.value) return
+  reorderingAttributes.value = true
+  try { await reorderItemAttributes(itemId, from, to) }
+  catch (cause) { error(cause?.message || 'Não foi possível salvar a ordem dos atributos.') }
+  finally { reorderingAttributes.value = false }
+}
 
 // Returns unique extra-field keys used across all variations of an item
 function getItemExtraKeys(itemId) {
@@ -302,19 +310,25 @@ const editingAttr = ref(null)
 const editAttrValue = ref('')
 const addingAttrItemId = ref(null)
 const newAttrName = ref('')
+const removingAttr = ref(null)
 
 function startAttrEdit(itemId, attrName) {
   editingAttr.value = { itemId, oldName: attrName }
   editAttrValue.value = attrName
 }
 
-function saveAttrEdit() {
+async function saveAttrEdit() {
   if (!editingAttr.value) return
   const newName = editAttrValue.value.trim()
   if (!newName || newName === editingAttr.value.oldName) { cancelAttrEdit(); return }
-  renameAttribute(editingAttr.value.itemId, editingAttr.value.oldName, newName)
-  success(`Atributo renomeado para "${newName}".`)
-  cancelAttrEdit()
+  try {
+    const result = await renameAttribute(editingAttr.value.itemId, editingAttr.value.oldName, newName)
+    if (!result?.ok) { error(result?.error || 'Não foi possível renomear o atributo.'); return }
+    success(`Atributo renomeado para "${newName}".`)
+    cancelAttrEdit()
+  } catch (cause) {
+    error(cause?.message || 'Não foi possível renomear o atributo.')
+  }
 }
 
 function cancelAttrEdit() {
@@ -332,12 +346,17 @@ function startAddAttr(itemId) {
   newAttrName.value = ''
 }
 
-function saveNewAttr() {
+async function saveNewAttr() {
   const name = newAttrName.value.trim()
   if (!name) { cancelAddAttr(); return }
-  addAttribute(addingAttrItemId.value, name)
-  success(`Atributo "${name}" adicionado.`)
-  cancelAddAttr()
+  try {
+    const result = await addAttribute(addingAttrItemId.value, name)
+    if (!result?.ok) { error(result?.error || 'Não foi possível adicionar o atributo.'); return }
+    success(`Atributo "${name}" adicionado.`)
+    cancelAddAttr()
+  } catch (cause) {
+    error(cause?.message || 'Não foi possível adicionar o atributo.')
+  }
 }
 
 function cancelAddAttr() {
@@ -351,8 +370,63 @@ function onNewAttrKeydown(e) {
 }
 
 function onRemoveAttr(itemId, attrName) {
-  removeAttribute(itemId, attrName)
-  success(`Atributo "${attrName}" removido.`)
+  removingAttr.value = {
+    itemId,
+    attrName,
+    affectedVariations: getVariationsForItem(itemId).filter(variation =>
+      Object.hasOwn(variation.values || {}, attrName)
+    ).length,
+  }
+}
+
+function cancelRemoveAttr() {
+  removingAttr.value = null
+}
+
+async function confirmRemoveAttr() {
+  const target = removingAttr.value
+  if (!target) return
+  try {
+    const result = await removeAttribute(target.itemId, target.attrName)
+    if (!result?.ok) { error(result?.error || 'Não foi possível excluir o atributo.'); return }
+    success(`Atributo "${target.attrName}" excluído.`)
+    cancelRemoveAttr()
+  } catch (cause) {
+    error(cause?.message || 'Não foi possível excluir o atributo.')
+  }
+}
+
+// ===== Item model editing =====
+const editingItemModel = ref(null)
+const editItemModelName = ref('')
+
+function startEditItemModel(item) {
+  editingItemModel.value = item
+  editItemModelName.value = item.name
+  cancelDelete()
+  cancelMove()
+}
+
+function cancelEditItemModel() {
+  editingItemModel.value = null
+  editItemModelName.value = ''
+  cancelAttrEdit()
+  cancelAddAttr()
+  cancelRemoveAttr()
+}
+
+async function saveItemModelName() {
+  const item = editingItemModel.value
+  const name = editItemModelName.value.trim()
+  if (!item || !name || name === item.name) return
+  try {
+    const result = await editItem(item.id, { name })
+    if (!result?.ok) { error(result?.error || 'Não foi possível renomear o modelo.'); return }
+    editItemModelName.value = result.item.name
+    success(`Modelo renomeado para "${result.item.name}".`)
+  } catch (cause) {
+    error(cause?.message || 'Não foi possível renomear o modelo.')
+  }
 }
 
 // ===== Item unit editing =====
@@ -823,7 +897,7 @@ async function saveAiCatalog() {
     subcategory: data.subcategory.trim() || null,
     name: data.name.trim(),
     unit: data.unit || 'UN',
-    minStock: 0,
+    minStock: null,
     attributes: [...data.attributes],
     location: ''
   })
@@ -991,7 +1065,7 @@ function onDrop(type, to, e) {
   if (type === 'group') reorderGroups(from, to)
   else if (type === 'category') reorderCategories(selectedGroup.value, from, to)
   else if (type === 'subcategory') reorderSubcategories(selectedGroup.value, selectedCategory.value, from, to)
-  else if (type.startsWith('attr:')) reorderItemAttributes(type.slice(5), from, to)
+  else if (type.startsWith('attr:')) moveAttribute(type.slice(5), from, to)
   onDragEnd()
 }
 
@@ -1023,6 +1097,8 @@ async function organizeSubcategoriesAlphabetically() {
 
   return {
     units,
+    moveAttribute,
+    reorderingAttributes,
     uniqueGroups,
     getCategoriesForGroup,
     getSubcategoriesForCategory,
@@ -1064,6 +1140,7 @@ async function organizeSubcategoriesAlphabetically() {
     editAttrValue,
     addingAttrItemId,
     newAttrName,
+    removingAttr,
     startAttrEdit,
     saveAttrEdit,
     cancelAttrEdit,
@@ -1073,8 +1150,15 @@ async function organizeSubcategoriesAlphabetically() {
     cancelAddAttr,
     onNewAttrKeydown,
     onRemoveAttr,
+    cancelRemoveAttr,
+    confirmRemoveAttr,
     editingUnitItemId,
     editUnitValue,
+    editingItemModel,
+    editItemModelName,
+    startEditItemModel,
+    cancelEditItemModel,
+    saveItemModelName,
     startEditUnit,
     saveEditUnit,
     cancelEditUnit,

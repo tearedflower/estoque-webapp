@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
     <div
       v-if="open"
       role="listbox"
-      class="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 max-h-60 overflow-auto rounded-lg border border-gray-300 bg-white text-sm text-gray-900 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+      class="ds-pop absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 max-h-60 overflow-auto rounded-lg border border-gray-300 bg-white text-sm text-gray-900 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
     >
       <button
         type="button"

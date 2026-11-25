@@ -47,11 +47,25 @@ function buildClosingData(year, month) {
   }
 
   const monthTotalsByVariation = new Map()
+  let movementMath = 0
+  let partialMovements = 0
   let movementCount = 0
   for (const movement of movements) {
     const date = new Date(movement.date)
     if (date < from || date >= to) continue
     movementCount += 1
+    const expectedStock = movement.type === 'entrada'
+      ? Number(movement.stock_before) + Number(movement.qty)
+      : Number(movement.stock_before) - Number(movement.qty)
+    if (Number.isFinite(expectedStock) && Math.abs(expectedStock - Number(movement.stock_after)) > 0.0001) {
+      movementMath += 1
+    }
+    if (
+      (movement.type === 'entrada' && !String(movement.supplier || '').trim()) ||
+      (movement.type === 'saida' && (!String(movement.requested_by || '').trim() || !String(movement.destination || '').trim()))
+    ) {
+      partialMovements += 1
+    }
     const current = monthTotalsByVariation.get(movement.variation_id) || { entradas: 0, saidas: 0 }
     if (movement.type === 'entrada') current.entradas += movement.qty
     else current.saidas += movement.qty
@@ -76,7 +90,7 @@ function buildClosingData(year, month) {
       variationExtras: JSON.parse(variation.extras || '{}'),
       location: variation.location || '',
       destinations: JSON.parse(variation.destinations || '[]'),
-      minStock: variation.min_stock || 0,
+      minStock: variation.min_stock_defined ? variation.min_stock : null,
       stockMonthStart,
       stockAtClose,
       currentStock,
@@ -107,6 +121,11 @@ function buildClosingData(year, month) {
     movementCount,
     zeroStock: rows.filter(row => row.stockAtClose <= 0).length,
     belowMin: rows.filter(row => row.minStock > 0 && row.stockAtClose > 0 && row.stockAtClose <= row.minStock).length,
+    inconsistencies: {
+      negativeStock: rows.filter(row => row.stockAtClose < 0).length,
+      movementMath,
+      partialMovements,
+    },
     groups: Object.values(groupTotals).sort((a, b) => a.group.localeCompare(b.group)),
   }
 

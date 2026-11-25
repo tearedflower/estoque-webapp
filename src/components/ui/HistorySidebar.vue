@@ -55,7 +55,7 @@ function toggleSection(facet) {
 
 <template>
   <aside
-    class="history-filter-sidebar ds-filter-rail fixed top-0 left-0 h-full z-40 w-60 border-r border-gray-200 dark:border-gray-700 shadow-lg transition-all duration-300 flex flex-col"
+    class="history-filter-sidebar ds-filter-rail fixed top-0 left-0 h-full z-40 w-60 border-r border-gray-200 dark:border-gray-700 shadow-lg flex flex-col"
   >
     <div class="border-b border-gray-200 dark:border-gray-700">
       <div class="flex items-center justify-between gap-2 p-3">
@@ -153,10 +153,13 @@ function toggleSection(facet) {
           </div>
           <div v-for="facet in mainFacets" :key="facet.key" class="border-t border-gray-100 dark:border-gray-700/50">
             <button
+              type="button"
               class="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
               :class="!isExpanded(facet)
                 ? 'text-gray-400 dark:text-gray-500 hover:text-gray-500 dark:hover:text-gray-400'
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+              :aria-expanded="isExpanded(facet)"
+              :aria-controls="`history-main-facet-${facet.key}`"
               @click="toggleSection(facet)"
             >
               <span class="flex items-center gap-1.5">
@@ -167,7 +170,12 @@ function toggleSection(facet) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
               </svg>
             </button>
-            <div v-if="isExpanded(facet)" class="px-3 pb-2.5 space-y-0.5">
+            <div
+              :id="`history-main-facet-${facet.key}`"
+              class="ds-collapse"
+              :class="{ 'ds-collapse-open': isExpanded(facet) }"
+            >
+              <div class="px-3 pb-2.5 space-y-0.5">
               <label
                 v-for="opt in facet.options"
                 :key="opt.value"
@@ -187,6 +195,7 @@ function toggleSection(facet) {
                 <span class="text-[13px] text-gray-700 dark:text-gray-300 truncate flex-1 group-hover:text-gray-900 dark:group-hover:text-gray-100 leading-tight">{{ opt.value }}</span>
                 <span class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">({{ opt.count }})</span>
               </label>
+            </div>
             </div>
           </div>
         </section>
@@ -198,10 +207,13 @@ function toggleSection(facet) {
           </div>
           <div v-for="facet in productFacets" :key="facet.key" class="border-t border-gray-100 dark:border-gray-700/50">
             <button
+              type="button"
               class="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
               :class="!isExpanded(facet)
                 ? 'text-gray-400 dark:text-gray-500 hover:text-gray-500 dark:hover:text-gray-400'
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+              :aria-expanded="isExpanded(facet)"
+              :aria-controls="`history-product-facet-${facet.key}`"
               @click="toggleSection(facet)"
             >
               <span class="flex items-center gap-1.5">
@@ -212,7 +224,12 @@ function toggleSection(facet) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
               </svg>
             </button>
-            <div v-if="isExpanded(facet)" class="px-3 pb-2.5 space-y-0.5">
+            <div
+              :id="`history-product-facet-${facet.key}`"
+              class="ds-collapse"
+              :class="{ 'ds-collapse-open': isExpanded(facet) }"
+            >
+              <div class="px-3 pb-2.5 space-y-0.5">
               <label
                 v-for="opt in facet.options"
                 :key="opt.value"
@@ -233,12 +250,16 @@ function toggleSection(facet) {
                 <span class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">({{ opt.count }})</span>
               </label>
             </div>
+            </div>
           </div>
         </section>
 
         <section v-if="detailFacets.length" class="order-30 border-b border-gray-200 bg-gray-50/70 dark:border-gray-600/70 dark:bg-gray-900/35">
           <button
+            type="button"
             class="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+            :aria-expanded="expandedGroups.details"
+            aria-controls="history-detail-facets"
             @click="expandedGroups.details = !expandedGroups.details"
           >
             <span class="flex items-center gap-1.5">
@@ -250,13 +271,21 @@ function toggleSection(facet) {
             </svg>
           </button>
 
-          <div v-if="expandedGroups.details">
+          <div
+            id="history-detail-facets"
+            class="ds-collapse"
+            :class="{ 'ds-collapse-open': expandedGroups.details }"
+          >
+            <div>
             <div v-for="facet in detailFacets" :key="facet.key" class="border-t border-gray-100 dark:border-gray-700/50">
               <button
+                type="button"
                 class="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
                 :class="!isExpanded(facet)
                   ? 'text-gray-400 dark:text-gray-500 hover:text-gray-500 dark:hover:text-gray-400'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+                :aria-expanded="isExpanded(facet)"
+                :aria-controls="`history-detail-facet-${facet.key}`"
                 @click="toggleSection(facet)"
               >
                 <span class="flex items-center gap-1.5">
@@ -267,7 +296,12 @@ function toggleSection(facet) {
                   <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
               </button>
-              <div v-if="isExpanded(facet)" class="px-3 pb-2.5 space-y-0.5">
+              <div
+                :id="`history-detail-facet-${facet.key}`"
+                class="ds-collapse"
+                :class="{ 'ds-collapse-open': isExpanded(facet) }"
+              >
+              <div class="px-3 pb-2.5 space-y-0.5">
                 <label
                   v-for="opt in facet.options"
                   :key="opt.value"
@@ -288,6 +322,8 @@ function toggleSection(facet) {
                   <span class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">({{ opt.count }})</span>
                 </label>
               </div>
+              </div>
+            </div>
             </div>
           </div>
         </section>

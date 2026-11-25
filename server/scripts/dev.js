@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEnvFile } from '../env.js'
 
 export const devProcesses = [
   { label: 'API', args: ['--watch', 'server/index.js', '--env=.env.dev'] },
@@ -10,9 +11,11 @@ export const devProcesses = [
 
 export function runDev() {
   if (!existsSync('.env.dev')) {
-    copyFileSync('.env.example', '.env.dev')
+    writeFileSync('.env.dev', readFileSync('.env.example', 'utf8').replace(/^PORT=.*$/m, 'PORT=3001'))
     console.log('Criado .env.dev a partir de .env.example')
   }
+  loadEnvFile('.env.dev')
+  process.env.PORT ||= '3001'
   const children = devProcesses.map(({ label, args }) => {
     const child = spawn(process.execPath, args, { stdio: 'inherit' })
     child.on('error', err => console.error(`${label}: ${err.message}`))

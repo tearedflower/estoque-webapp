@@ -14,21 +14,25 @@
     "server:prod": "node server/scripts/start.js",
     "smoke:local": "node --test test/api.integration.test.js",
     "backup:restore": "node server/scripts/restoreBackup.js",
+    "import:workbook": "node server/scripts/importWorkbook.js",
     "prod:promote-people": "node server/scripts/promotePeopleRoles.js --from=.env.dev --to=.env.prod",
     "windows:install": "powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/installWindowsTask.ps1",
     "windows:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/uninstallWindowsTask.ps1",
     "db:seed:dev": "node server/scripts/seedDatabase.js --env=.env.dev --mode=seed",
     "db:reset:dev": "node server/scripts/seedDatabase.js --env=.env.dev --mode=reset",
-    "db:reset:prod": "node server/scripts/seedDatabase.js --env=.env.prod --mode=reset"
+    "db:reset:prod": "node server/scripts/seedDatabase.js --env=.env.prod --mode=reset",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "read-excel-file": "^9.0.10",
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.2.1",
     "@vitejs/plugin-vue": "^5.2.3",
     "tailwindcss": "^4.2.1",

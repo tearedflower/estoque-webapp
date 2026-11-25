@@ -309,7 +309,7 @@ async function saveAiCatalog() {
       subcategory: data.subcategory.trim() || null,
       name: data.name.trim(),
       unit: data.unit || 'UN',
-      minStock: 0,
+      minStock: null,
       attributes: [...data.attributes],
       location: '',
     })

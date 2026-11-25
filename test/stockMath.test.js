@@ -8,6 +8,8 @@ test('parsePositiveQty accepts only positive finite numbers', () => {
   assert.equal(parsePositiveQty(0), null)
   assert.equal(parsePositiveQty(-1), null)
   assert.equal(parsePositiveQty('abc'), null)
+  assert.equal(parsePositiveQty(true), null)
+  assert.equal(parsePositiveQty([2]), null)
 })
 
 test('calculateStockAfter adds entries and subtracts exits', () => {
@@ -19,6 +21,8 @@ test('hasEnoughStock blocks negative exit stock', () => {
   assert.equal(hasEnoughStock('saida', 3, 4), false)
   assert.equal(hasEnoughStock('saida', 3, 3), true)
   assert.equal(hasEnoughStock('entrada', 0, 100), true)
+  assert.equal(hasEnoughStock('entrada', -4, 2), true)
+  assert.equal(hasEnoughStock('saida', -4, 2), false)
 })
 
 test('calculateStockAfter rejects invalid movement type', () => {

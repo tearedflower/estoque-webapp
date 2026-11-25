@@ -1,9 +1,12 @@
 <script setup>
 import { useEditHierarchyState } from '../composables/useEditHierarchyState.js'
 import AppDialog from '../components/ui/AppDialog.vue'
+import { orderedAttributeNames } from '../utils/attributes.js'
 
 const {
   units,
+  moveAttribute,
+  reorderingAttributes,
   uniqueGroups,
   getCategoriesForGroup,
   getSubcategoriesForCategory,
@@ -44,6 +47,7 @@ const {
   editAttrValue,
   addingAttrItemId,
   newAttrName,
+  removingAttr,
   startAttrEdit,
   saveAttrEdit,
   cancelAttrEdit,
@@ -53,8 +57,15 @@ const {
   cancelAddAttr,
   onNewAttrKeydown,
   onRemoveAttr,
+  cancelRemoveAttr,
+  confirmRemoveAttr,
   editingUnitItemId,
   editUnitValue,
+  editingItemModel,
+  editItemModelName,
+  startEditItemModel,
+  cancelEditItemModel,
+  saveItemModelName,
   startEditUnit,
   saveEditUnit,
   cancelEditUnit,
@@ -158,13 +169,13 @@ const {
   <div class="flex gap-0 min-h-[520px] rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700">
 
     <!-- LEFT: Groups list -->
-    <div class="hierarchy-group-sidebar w-56 flex-shrink-0 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+    <div class="hierarchy-group-sidebar w-64 flex-shrink-0 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
       <div class="px-3 pt-2.5 pb-2 border-b border-gray-200 dark:border-gray-700 flex flex-col gap-2">
         <div class="flex items-center justify-between gap-2">
           <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Grupos</p>
           <button
             v-if="uniqueGroups.length && !searchQ"
-            class="rounded-md bg-white/10 px-2 py-1 text-[10px] font-semibold text-white/90 transition-colors hover:bg-white/20 hover:text-white"
+            class="ds-chip cursor-pointer hover:border-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
             title="Organizar grupos em ordem alfabetica"
             @click="organizeGroupsAlphabetically"
           >
@@ -172,11 +183,11 @@ const {
           </button>
         </div>
         <div class="relative">
-          <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-300 dark:text-gray-600 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" /></svg>
+          <svg class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ds-text-subtle)]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" /></svg>
           <input
             v-model="groupSearch"
             placeholder="Filtrar..."
-            class="w-full pl-6 pr-2 py-1 text-xs rounded-md bg-gray-100 dark:bg-gray-700/60 border border-transparent focus:border-gray-300 dark:focus:border-gray-600 text-gray-600 dark:text-gray-300 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none transition-colors"
+            class="ds-input !min-h-10 !pl-9 !pr-3 !text-xs"
           />
         </div>
       </div>
@@ -232,7 +243,7 @@ const {
 
           <template v-else-if="isDeleting('group', group)">
             <span class="flex-1 min-w-0 text-xs font-medium truncate">Excluir?</span>
-            <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-500 text-white hover:bg-red-600 flex-shrink-0" @click.stop="confirmDelete">Sim</button>
+            <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)] flex-shrink-0" @click.stop="confirmDelete">Sim</button>
             <button class="px-1.5 py-0.5 text-[10px] rounded bg-white/20 hover:bg-white/30 flex-shrink-0" @click.stop="cancelDelete">Não</button>
           </template>
 
@@ -353,16 +364,20 @@ const {
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ item.name }}</p>
                   <div class="mt-1 flex flex-wrap gap-1">
-                    <span v-for="attr in (item.attributes || [])" :key="attr" class="px-1.5 py-0.5 text-[11px] rounded bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">{{ attr }}</span>
+                    <span v-for="attr in orderedAttributeNames(item)" :key="attr" class="px-1.5 py-0.5 text-[11px] rounded bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">{{ attr }}</span>
                     <span v-if="!(item.attributes || []).length" class="text-xs text-gray-400 dark:text-gray-500 italic">Sem atributos</span>
                   </div>
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex items-center gap-1">
                   <span class="text-xs font-medium text-red-500">Excluir?</span>
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex items-center gap-1">
+                  <button class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300" title="Editar atributos do modelo" @click.stop="startEditItemModel(item)">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
+                    Editar
+                  </button>
                   <button class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300" title="Mover modelo" @click.stop="startMoveItem(item)">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3 3m-3-3 3-3" /></svg>
                     Mover
@@ -404,7 +419,7 @@ const {
                 @dragover.stop="!searchQ && onDragOver('category', cIdx, $event)"
                 @drop.stop="!searchQ && onDrop('category', cIdx, $event)"
                 @dragend.stop="onDragEnd"
-                class="group/card relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all border-t-4"
+                class="group/card relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100 border-t-4"
                 :class="[
                   isDragTarget('category', cIdx) ? '!border-t-primary-500' : 'border-t-transparent',
                   isDragFrom('category', cIdx) ? 'opacity-40' : ''
@@ -454,7 +469,7 @@ const {
                 <div class="absolute inset-0 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 flex flex-col items-center justify-center gap-2 p-3">
                   <p class="text-xs font-medium text-red-600 dark:text-red-400 text-center">Excluir {{ countItemsInCategory(selectedGroup, cat) }} modelo(s)?</p>
                   <div class="flex gap-2">
-                    <button class="px-3 py-1 text-xs font-bold rounded bg-red-500 text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                    <button class="px-3 py-1 text-xs font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                     <button class="px-3 py-1 text-xs rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300" @click.stop="cancelDelete">Não</button>
                   </div>
                 </div>
@@ -553,16 +568,20 @@ const {
                 <div>
                   <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ item.name }}</p>
                   <div class="mt-1 flex flex-wrap gap-1">
-                    <span v-for="attr in (item.attributes || [])" :key="attr" class="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">{{ attr }}</span>
+                    <span v-for="attr in orderedAttributeNames(item)" :key="attr" class="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">{{ attr }}</span>
                     <span v-if="!(item.attributes || []).length" class="text-xs italic text-gray-400 dark:text-gray-500">Sem atributos</span>
                   </div>
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex items-center gap-1">
                   <span class="text-xs font-medium text-red-500">Excluir?</span>
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex items-center gap-1">
+                  <button class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300" title="Editar atributos do modelo" @click.stop="startEditItemModel(item)">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
+                    Editar
+                  </button>
                   <button class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300" title="Mover modelo" @click.stop="startMoveItem(item)">
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3 3m-3-3 3-3" /></svg>
                     Mover
@@ -668,7 +687,7 @@ const {
                     <template v-if="isDeleting('subcategory', selectedGroup, selectedCategory, sub)">
                       <div class="flex items-center gap-1">
                         <span class="text-[11px] text-red-500 font-medium whitespace-nowrap">Excluir?</span>
-                        <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-500 text-white hover:bg-red-600" @click="confirmDelete">Sim</button>
+                        <button class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--ds-danger-solid)] text-white hover:bg-[var(--ds-danger-hover)]" @click="confirmDelete">Sim</button>
                         <button class="px-1.5 py-0.5 text-[10px] rounded bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300" @click="cancelDelete">Não</button>
                       </div>
                     </template>
@@ -888,10 +907,17 @@ const {
                   </template>
                 </div>
                 <div v-if="isDeleting('item', item.id, item.name)" class="flex shrink-0 items-center gap-1">
-                  <button class="rounded bg-red-500 px-2 py-1 text-xs font-bold text-white hover:bg-red-600" @click.stop="confirmDelete">Sim</button>
+                  <button class="rounded bg-[var(--ds-danger-solid)] px-2 py-1 text-xs font-bold text-white hover:bg-[var(--ds-danger-hover)]" @click.stop="confirmDelete">Sim</button>
                   <button class="rounded bg-gray-100 px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click.stop="cancelDelete">Nao</button>
                 </div>
                 <div v-else class="flex shrink-0 items-center gap-1 opacity-0 transition group-hover/card:opacity-100">
+                  <button
+                    class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300"
+                    title="Editar atributos do modelo"
+                    @click.stop="startEditItemModel(item)"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
+                  </button>
                   <button
                     class="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-primary-100 hover:text-primary-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-primary-900/30 dark:hover:text-primary-300"
                     title="Mover modelo"
@@ -915,7 +941,7 @@ const {
                 <p class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5">Atributos</p>
                 <div class="flex flex-wrap gap-1">
                   <span
-                    v-for="(attr, aIdx) in (item.attributes || [])"
+                    v-for="(attr, aIdx) in orderedAttributeNames(item)"
                     :key="attr"
                     :draggable="!isEditingAttr(item.id, attr)"
                     @dragstart.stop="!isEditingAttr(item.id, attr) && onDragStart('attr:' + item.id, aIdx, $event)"
@@ -1117,6 +1143,102 @@ const {
   </AppDialog>
 
   <AppDialog
+    v-if="editingItemModel"
+    visible
+    aria-label="Editar modelo"
+    @close="cancelEditItemModel"
+  >
+    <section class="w-full max-w-lg overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+      <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Editar modelo</p>
+          <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingItemModel.name }}</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Renomear preserva os valores das variações. Excluir remove o campo das variações atuais.</p>
+        </div>
+        <button type="button" class="rounded-lg px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800" @click="cancelEditItemModel">Fechar</button>
+      </div>
+
+      <div class="space-y-3 px-5 py-4">
+        <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+          <label for="edit-model-name" class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Nome do modelo</label>
+          <div class="mt-2 flex gap-2">
+            <input
+              id="edit-model-name"
+              v-model="editItemModelName"
+              class="ds-input min-w-0 flex-1"
+              @keydown.enter.prevent="saveItemModelName"
+            />
+            <button
+              type="button"
+              class="min-h-10 rounded-lg bg-primary-600 px-4 text-sm font-semibold hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+              style="color: var(--ds-primary-text)"
+              :disabled="!editItemModelName.trim() || editItemModelName.trim() === editingItemModel.name"
+              @click="saveItemModelName"
+            >
+              Salvar nome
+            </button>
+          </div>
+        </div>
+
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Atributos</p>
+        <div v-if="editingItemModel.attributes?.length" class="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
+          <div v-for="(attr, index) in orderedAttributeNames(editingItemModel)" :key="attr" class="flex min-h-11 flex-wrap items-center justify-between gap-3 px-3 py-2">
+            <template v-if="isEditingAttr(editingItemModel.id, attr)">
+              <input v-model="editAttrValue" class="ds-input min-w-0 flex-1" autofocus @keydown="onAttrEditKeydown" />
+              <div class="flex shrink-0 gap-2">
+                <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800" @click="cancelAttrEdit">Cancelar</button>
+                <button type="button" class="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold hover:bg-primary-700" style="color: var(--ds-primary-text)" @click="saveAttrEdit">Salvar</button>
+              </div>
+            </template>
+            <template v-else>
+              <span class="font-medium text-gray-800 dark:text-gray-100">{{ attr }}</span>
+              <div class="flex shrink-0 gap-1">
+                <button type="button" class="attribute-order-button" :aria-label="`Mover ${attr} para cima`" title="Mover para cima" :disabled="index === 0 || reorderingAttributes" @click="moveAttribute(editingItemModel.id, index, index - 1)">↑</button>
+                <button type="button" class="attribute-order-button" :aria-label="`Mover ${attr} para baixo`" title="Mover para baixo" :disabled="index === editingItemModel.attributes.length - 1 || reorderingAttributes" @click="moveAttribute(editingItemModel.id, index, index + 1)">↓</button>
+                <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:text-gray-300 dark:hover:bg-gray-800" @click="startAttrEdit(editingItemModel.id, attr)">Renomear</button>
+                <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-gray-300 dark:hover:bg-red-900/20" @click="onRemoveAttr(editingItemModel.id, attr)">Excluir</button>
+              </div>
+            </template>
+          </div>
+        </div>
+        <p v-else class="rounded-lg border border-dashed border-gray-200 px-3 py-5 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">Este modelo ainda não possui atributos.</p>
+
+        <div v-if="addingAttrItemId === editingItemModel.id" class="flex gap-2">
+          <input v-model="newAttrName" class="ds-input min-w-0 flex-1" placeholder="Nome do novo atributo" autofocus @keydown="onNewAttrKeydown" />
+          <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800" @click="cancelAddAttr">Cancelar</button>
+          <button type="button" class="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold hover:bg-primary-700 disabled:opacity-50" style="color: var(--ds-primary-text)" :disabled="!newAttrName.trim()" @click="saveNewAttr">Adicionar</button>
+        </div>
+        <button v-else type="button" class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800" @click="startAddAttr(editingItemModel.id)">
+          <span aria-hidden="true">+</span> Novo atributo
+        </button>
+      </div>
+    </section>
+  </AppDialog>
+
+  <AppDialog
+    v-if="removingAttr"
+    visible
+    aria-label="Confirmar exclusão do atributo"
+    @close="cancelRemoveAttr"
+  >
+    <section class="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+      <div class="px-5 py-4">
+        <p class="text-[11px] font-bold uppercase tracking-widest text-red-500">Excluir atributo</p>
+        <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ removingAttr.attrName }}</h3>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          O atributo será removido do modelo
+          <template v-if="removingAttr.affectedVariations"> e de {{ removingAttr.affectedVariations }} variação(ões) que possuem valor preenchido</template>.
+          O histórico de movimentações não será alterado.
+        </p>
+      </div>
+      <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-gray-800">
+        <button type="button" class="rounded-lg bg-gray-100 px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700" @click="cancelRemoveAttr">Cancelar</button>
+        <button type="button" class="rounded-lg bg-[var(--ds-danger-solid)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--ds-danger-hover)]" @click="confirmRemoveAttr">Excluir atributo</button>
+      </div>
+    </section>
+  </AppDialog>
+
+  <AppDialog
     v-if="addingItemForSub"
     visible
     aria-label="Criar modelo de item"
@@ -1265,3 +1387,10 @@ const {
     </div>
   </AppDialog>
 </template>
+
+<style scoped>
+.attribute-order-button { min-width: 32px; min-height: 36px; border: 1px solid var(--ds-border); border-radius: 6px; color: var(--ds-text); cursor: pointer; }
+.attribute-order-button:hover { background: var(--ds-surface-hover); }
+.attribute-order-button:disabled { opacity: .35; cursor: default; }
+.attribute-order-button:focus-visible { outline: 2px solid var(--ds-active-text); outline-offset: 2px; }
+</style>

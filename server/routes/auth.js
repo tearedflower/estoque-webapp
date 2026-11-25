@@ -178,7 +178,13 @@ router.put('/users/:id', requireAuth, (req, res) => {
 
   if (updates.length) {
     params.push(req.params.id)
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params)
+    db.transaction(() => {
+      db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params)
+      if (pin !== undefined || active === false) {
+        const keepToken = isSelf && active !== false ? getAuthToken(req) : ''
+        db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(req.params.id, keepToken)
+      }
+    })()
   }
 
   const updated = db.prepare('SELECT id, name, username, role, active, must_change_password FROM users WHERE id = ?').get(req.params.id)

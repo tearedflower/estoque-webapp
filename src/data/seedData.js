@@ -3,6 +3,7 @@
  * Returns { items, variations } arrays ready for injection.
  */
 import { generateId } from '../utils/id.js'
+import { enrichOperationalSeed } from './operationalSeed.js'
 
 function makeItems(defs) {
   const items = []
@@ -1457,5 +1458,5 @@ export function generateSeedData() {
       ]},
   ]
 
-  return enrichSeedData(makeItems(allDefs))
+  return enrichOperationalSeed(makeItems(allDefs))
 }

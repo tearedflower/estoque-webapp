@@ -73,6 +73,7 @@ export function useUsers() {
     users,
     activeUsers,
     loadData,
+    clearData: () => { users.value = [] },
     addUser,
     editUser,
     toggleUserActive,

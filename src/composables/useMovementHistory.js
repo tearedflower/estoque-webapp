@@ -4,9 +4,19 @@ import { normalizeSearchText } from '../utils/globalSearch.js'
 const HISTORY_STATE_KEY = 'estoque_movement_history_v1'
 const PAGE_SIZE_OPTIONS = [20, 50, 100]
 
+export function searchHistoryFacets(facets, search) {
+  const query = normalizeSearchText(search)
+  if (!query) return facets
+  return facets.flatMap(facet => {
+    if (normalizeSearchText(facet.label).includes(query)) return [facet]
+    const options = facet.options.filter(option => normalizeSearchText(option.value).includes(query))
+    return options.length ? [{ ...facet, options }] : []
+  })
+}
+
 function loadHistoryState() {
   try {
-    return JSON.parse(globalThis.localStorage?.getItem(HISTORY_STATE_KEY) || '{}')
+    return JSON.parse(globalThis.sessionStorage?.getItem(HISTORY_STATE_KEY) || '{}')
   } catch {
     return {}
   }
@@ -20,7 +30,7 @@ function savedFilters(value) {
 
 function saveHistoryState(state) {
   try {
-    globalThis.localStorage?.setItem(HISTORY_STATE_KEY, JSON.stringify(state))
+    globalThis.sessionStorage?.setItem(HISTORY_STATE_KEY, JSON.stringify(state))
   } catch {
     // The history still works when browser storage is unavailable.
   }
@@ -39,6 +49,7 @@ const FIELD_BY_FILTER = {
 export function useMovementHistory(movements) {
   const saved = loadHistoryState()
   const histSearch = ref(typeof saved.search === 'string' ? saved.search : '')
+  const histVariationId = ref(typeof saved.variationId === 'string' ? saved.variationId : '')
   const histDateFrom = ref(typeof saved.dateFrom === 'string' ? saved.dateFrom : '')
   const histDateTo = ref(typeof saved.dateTo === 'string' ? saved.dateTo : '')
   const histFilters = ref(savedFilters(saved.filters))
@@ -63,28 +74,32 @@ export function useMovementHistory(movements) {
     return fieldName ? movement[fieldName] : ''
   }
 
-  function movementMatchesSearch(movement) {
-    const q = normalizeSearchText(histSearch.value).trim()
-    if (!q) return true
-    const haystack = [
+  // Normalize each record only when the history changes, never once per facet and keystroke.
+  const searchIndex = computed(() => movements.value.map(movement => ({
+    movement,
+    date: new Date(movement.date).getTime(),
+    text: [
       movement.itemName, movement.itemGroup, movement.itemCategory, movement.itemSubcategory,
       movement.supplier, movement.requestedBy, movement.destination,
       movement.docRef, movement.operatorName, movement.note,
       ...Object.values(movement.variationValues || {}),
       ...Object.values(movement.variationExtras || {}),
-    ].map(normalizeSearchText).join(' ')
-    return haystack.includes(q)
-  }
-
-  function movementMatchesDateRange(movement) {
-    if (histDateFrom.value && new Date(movement.date) < new Date(histDateFrom.value)) return false
+    ].map(normalizeSearchText).join(' '),
+  })))
+  const baseMovements = computed(() => {
+    const q = normalizeSearchText(histSearch.value)
+    const from = histDateFrom.value ? new Date(`${histDateFrom.value}T00:00:00`).getTime() : null
+    let end = null
     if (histDateTo.value) {
-      const to = new Date(histDateTo.value)
+      const to = new Date(`${histDateTo.value}T00:00:00`)
       to.setDate(to.getDate() + 1)
-      if (new Date(movement.date) >= to) return false
+      end = to.getTime()
     }
-    return true
-  }
+    return searchIndex.value.filter(entry => (!q || entry.text.includes(q)) &&
+      (!histVariationId.value || entry.movement.variationId === histVariationId.value) &&
+      (from === null || !(entry.date < from)) && (end === null || !(entry.date >= end)))
+      .map(entry => entry.movement)
+  })
 
   function movementMatchesFilters(movement, ignoredKey = '') {
     for (const [key, selectedValues] of Object.entries(histFilters.value)) {
@@ -94,76 +109,43 @@ export function useMovementHistory(movements) {
     return true
   }
 
-  function movementMatchesBase(movement) {
-    return movementMatchesSearch(movement) && movementMatchesDateRange(movement)
-  }
-
-  function buildCountsForFacet(facetKey) {
-    const counts = {}
-    function inc(key, val) {
-      if (!val) return
-      if (!counts[key]) counts[key] = {}
-      counts[key][val] = (counts[key][val] || 0) + 1
-    }
-
-    for (const m of movements.value) {
-      if (!movementMatchesBase(m) || !movementMatchesFilters(m, facetKey)) continue
-      inc(facetKey, getFilterValue(m, facetKey))
-    }
-    return counts[facetKey] || {}
-  }
+  const attributeKeys = computed(() => [...new Set(movements.value.flatMap(m => Object.keys(m.variationValues || {}).map(key => `attr_${key}`)))])
 
   const histFacets = computed(() => {
     if (!movements.value.length) return []
     const selected = histFilters.value
+    const attrKeys = new Set([...attributeKeys.value, ...Object.keys(selected).filter(key => key.startsWith('attr_'))])
+    const definitions = [...facetDefs, ...[...attrKeys].map(key => ({ key, label: key.slice(5), group: 'details', priority: 100, defaultExpanded: false }))]
+    const counts = new Map(definitions.map(def => [def.key, new Map()]))
+    const active = Object.entries(selected).filter(([, values]) => values.length)
+    // A facet ignores only its own selection. Two failed filters exclude every facet.
+    for (const movement of baseMovements.value) {
+      const failed = active.filter(([key, values]) => !values.includes(getFilterValue(movement, key)))
+      if (failed.length > 1) continue
+      for (const def of definitions) {
+        if (failed.length && failed[0][0] !== def.key) continue
+        const value = getFilterValue(movement, def.key)
+        if (!value) continue
+        const values = counts.get(def.key)
+        values.set(value, (values.get(value) || 0) + 1)
+      }
+    }
 
     function makeFacet(def) {
-      const vals = buildCountsForFacet(def.key)
+      const vals = counts.get(def.key)
       for (const value of selected[def.key] || []) {
-        if (vals[value] === undefined) vals[value] = 0
+        if (!vals.has(value)) vals.set(value, 0)
       }
-      const options = Object.entries(vals)
+      const options = [...vals.entries()]
         .sort((a, b) => b[1] - a[1])
         .map(([value, count]) => ({ value, count }))
       if (!options.length) return null
       return { ...def, options, selected: selected[def.key] || [] }
     }
 
-    const result = facetDefs
+    const result = definitions
       .map(makeFacet)
       .filter(Boolean)
-
-    const attrKeys = new Set()
-    for (const m of movements.value) {
-      for (const key of Object.keys(m.variationValues || {})) {
-        attrKeys.add(`attr_${key}`)
-      }
-    }
-    for (const key of Object.keys(selected)) {
-      if (key.startsWith('attr_')) attrKeys.add(key)
-    }
-
-    for (const key of attrKeys) {
-      const attrName = key.slice(5)
-      const vals = buildCountsForFacet(key)
-      for (const value of selected[key] || []) {
-        if (vals[value] === undefined) vals[value] = 0
-      }
-      const options = Object.entries(vals)
-        .sort((a, b) => b[1] - a[1])
-        .map(([value, count]) => ({ value, count }))
-      if (options.length) {
-        result.push({
-          key,
-          label: attrName,
-          group: 'details',
-          priority: 100,
-          defaultExpanded: false,
-          options,
-          selected: selected[key] || [],
-        })
-      }
-    }
 
     return result.sort((a, b) =>
       (a.group || '').localeCompare(b.group || '') ||
@@ -173,6 +155,7 @@ export function useMovementHistory(movements) {
   })
 
   const hasHistFilters = computed(() =>
+    Boolean(histVariationId.value) ||
     histSearch.value.trim().length > 0 ||
     histDateFrom.value !== '' ||
     histDateTo.value !== '' ||
@@ -188,6 +171,7 @@ export function useMovementHistory(movements) {
   }
 
   function clearHistFilters() {
+    histVariationId.value = ''
     histSearch.value = ''
     histDateFrom.value = ''
     histDateTo.value = ''
@@ -195,9 +179,7 @@ export function useMovementHistory(movements) {
   }
 
   const filteredMovements = computed(() => {
-    return movements.value.filter(m =>
-      movementMatchesBase(m) && movementMatchesFilters(m)
-    )
+    return baseMovements.value.filter(m => movementMatchesFilters(m))
   })
 
   const historyTotalPages = computed(() => Math.max(1, Math.ceil(filteredMovements.value.length / historyPageSize.value)))
@@ -206,10 +188,11 @@ export function useMovementHistory(movements) {
     return filteredMovements.value.slice(start, start + historyPageSize.value)
   })
 
-  watch([histSearch, histDateFrom, histDateTo, histFilters, historyPageSize], () => {
+  watch([histSearch, histVariationId, histDateFrom, histDateTo, histFilters, historyPageSize], () => {
     historyCurrentPage.value = 1
     saveHistoryState({
       search: histSearch.value,
+      variationId: histVariationId.value,
       dateFrom: histDateFrom.value,
       dateTo: histDateTo.value,
       filters: histFilters.value,
@@ -232,6 +215,7 @@ export function useMovementHistory(movements) {
   })
 
   return {
+    histVariationId,
     histSearch,
     histDateFrom,
     histDateTo,

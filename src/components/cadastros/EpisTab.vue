@@ -1,16 +1,24 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { useItems } from '../../composables/useItems.js'
+import { usePeople } from '../../composables/usePeople.js'
 import { useRoles } from '../../composables/useRoles.js'
 import { useEpis } from '../../composables/useEpis.js'
 import { useToast } from '../../composables/useToast.js'
 import { normalizeSearchText } from '../../utils/globalSearch.js'
+import { catalogRowsForTarget, epiVariationCa } from '../../utils/epiSheet.js'
+import { groupEpiRolesBySector } from '../../utils/epiRoleSectors.js'
 import AttributeBadges from '../ui/AttributeBadges.vue'
 import AppDialog from '../ui/AppDialog.vue'
+import EpiGeneralControl from './EpiGeneralControl.vue'
+import EpiOverview from './EpiOverview.vue'
+import EpiVariationChoices from './EpiVariationChoices.vue'
 
 const isLoggedIn = inject('isLoggedIn')
 const { items, variations } = useItems()
 const { activeRoles } = useRoles()
+const { people } = usePeople()
+const personNames = computed(() => new Map(people.value.map(person => [person.id, person.name])))
 const {
   roleRules,
   addRoleRule,
@@ -20,15 +28,23 @@ const {
 const { success, error } = useToast()
 
 const selectedRoleName = ref('')
-const rolePickerOpen = ref(false)
+const view = ref('general')
+const showInactive = ref(false)
 const roleSearch = ref('')
-const selectedRuleTarget = ref(null)
+const onlyRolesWithEpi = ref(false)
 const ruleDayDrafts = ref({})
 const ruleQuantityDrafts = ref({})
+const ruleReasonDrafts = ref({})
+const ruleObservationDrafts = ref({})
 const selectorOpen = ref(false)
+const editingRuleId = ref(null)
+const approvedCas = ref([])
+const approvedItemId = ref('')
+const approvedCaEdited = ref(false)
+const selectorSaving = ref(false)
 const selectorContext = ref('rule')
 const selectorSearch = ref('')
-const selectorScope = ref('levels')
+const linkSingleVariation = ref(false)
 const selectedGroup = ref('')
 const selectedCategory = ref('')
 const selectedSubcategory = ref('')
@@ -50,34 +66,23 @@ const targetTypeLabels = {
 const DIRECT_ITEMS_SUBCATEGORY = 'Itens diretos'
 
 const itemById = computed(() => new Map(items.value.map(item => [item.id, item])))
-const filteredRoles = computed(() => {
-  const search = normalizeSearchText(roleSearch.value)
-  if (!search) return activeRoles.value
-  return activeRoles.value.filter(role => normalizeSearchText(role.name).includes(search))
+const rolesWithEpi = computed(() => new Set(roleRules.value
+  .filter(rule => rule.active)
+  .filter(rule => catalogRowsForTarget(items.value, variations.value, rule).length > 0)
+  .map(rule => normalizeSearchText(rule.roleName))))
+const visibleRoles = computed(() => onlyRolesWithEpi.value
+  ? activeRoles.value.filter(role => rolesWithEpi.value.has(normalizeSearchText(role.name)))
+  : activeRoles.value)
+const roleGroups = computed(() => groupEpiRolesBySector(visibleRoles.value, roleSearch.value))
+
+watch([visibleRoles, selectedRoleName], ([roles, selected]) => {
+  if (onlyRolesWithEpi.value && !roles.some(role => role.name === selected)) {
+    selectedRoleName.value = roles[0]?.name || ''
+  }
 })
-
-function openRolePicker() {
-  roleSearch.value = ''
-  rolePickerOpen.value = true
-}
-
-function selectRole(role) {
-  selectedRoleName.value = role.name
-  rolePickerOpen.value = false
-}
 
 function hierarchy(item) {
   return [item.group, item.category, item.subcategory].filter(Boolean).join(' > ')
-}
-
-function variationLabel(variation, item) {
-  const attrs = (item?.attributes || [])
-    .map(attr => variation.values?.[attr] ? `${attr}: ${variation.values[attr]}` : '')
-    .filter(Boolean)
-  const extras = Object.entries(variation.extras || {})
-    .filter(([, value]) => value)
-    .map(([key, value]) => `${key}: ${value}`)
-  return [...attrs, ...extras].join(' / ') || 'Sem atributos'
 }
 
 function makeGroupTarget(group) {
@@ -105,7 +110,7 @@ function makeVariationTarget(variation, item) {
   return {
     targetType: 'variacao',
     targetKey: variation.id,
-    targetLabel: `${item.name} - ${variationLabel(variation, item)}`,
+    targetLabel: makeItemTarget(item).targetLabel,
     itemId: item.id,
     variationId: variation.id,
   }
@@ -169,7 +174,6 @@ function filterTargets(search) {
 
 const modalSearchTargets = computed(() =>
   filterTargets(selectorSearch.value)
-    .filter(target => selectorScope.value === 'levels' || target.targetType === 'variacao')
 )
 
 const groups = computed(() =>
@@ -216,12 +220,9 @@ const itemsForSelection = computed(() =>
   }
 )
 
-const variationsForSelectedItem = computed(() =>
-  variations.value
-    .filter(variation => variation.itemId === selectedItemId.value)
-    .map(variation => ({ variation, item: itemById.value.get(variation.itemId) }))
-    .filter(row => row.item)
-)
+const selectedItem = computed(() => itemById.value.get(selectedItemId.value))
+const variationsForSelectedItem = computed(() => variations.value
+  .filter(variation => variation.itemId === selectedItemId.value && variation.active !== false))
 
 const modalSelectedLabel = computed(() =>
   modalSelectedTarget.value ? readableTargetLabel(modalSelectedTarget.value) : 'Nenhum EPI selecionado'
@@ -253,27 +254,116 @@ function stockTotal(list) {
   return list.reduce((sum, item) => sum + itemStock(item), 0)
 }
 
-function openSelector(context) {
+function openCurrentTarget(rule) {
+  const item = rule.targetType === 'item'
+    ? itemById.value.get(rule.targetKey)
+    : targetVariationRow(rule)?.item
+  if (item) {
+    selectedGroup.value = item.group || ''
+    selectedCategory.value = item.category || ''
+    selectedSubcategory.value = item.subcategory || (subcategoriesForCategory.value.length ? DIRECT_ITEMS_SUBCATEGORY : '')
+    selectedItemId.value = item.id
+    return
+  }
+  if (['grupo', 'categoria', 'subcategoria'].includes(rule.targetType)) {
+    const [group, category = '', subcategory = ''] = rule.targetKey.split('|')
+    selectedGroup.value = group
+    selectedCategory.value = category
+    selectedSubcategory.value = subcategory
+  }
+}
+
+function openSelector(context, rule = null) {
   selectorContext.value = context
   selectorSearch.value = ''
-  selectorScope.value = 'levels'
-  modalSelectedTarget.value = selectedRuleTarget.value
+  linkSingleVariation.value = rule?.targetType === 'variacao'
+  editingRuleId.value = rule?.id || null
+  resetSelectorPath()
+  modalSelectedTarget.value = rule
+  approvedCas.value = []
+  approvedItemId.value = ''
+  approvedCaEdited.value = false
+  if (rule) {
+    openCurrentTarget(rule)
+    const variation = targetVariationRow(rule)?.variation
+    const ca = variation && epiVariationCa(variation.values, variation.extras)
+    approvedItemId.value = selectedItemId.value
+    approvedCas.value = rule.targetType === 'item' ? (rule.allowedCas || []).filter(Boolean) : ca ? [ca] : []
+  }
   selectorOpen.value = true
 }
 
 function closeSelector() {
+  if (selectorSaving.value) return
   selectorOpen.value = false
+  editingRuleId.value = null
 }
 
 function setModalTarget(target) {
-  if (selectorScope.value === 'variations' && target.targetType !== 'variacao') return
   modalSelectedTarget.value = target
 }
 
-function confirmSelector() {
-  if (!modalSelectedTarget.value) return
-  selectedRuleTarget.value = modalSelectedTarget.value
-  selectorOpen.value = false
+function toggleApprovedCa(ca) {
+  approvedCas.value = approvedCas.value.includes(ca)
+    ? approvedCas.value.filter(value => value !== ca)
+    : [...approvedCas.value, ca]
+  approvedCaEdited.value = true
+}
+
+function chooseSearchTarget(target) {
+  if (target.itemId) {
+    const item = itemById.value.get(target.itemId)
+    selectedGroup.value = item.group || ''
+    selectedCategory.value = item.category || ''
+    selectedSubcategory.value = item.subcategory || (subcategoriesForCategory.value.length ? DIRECT_ITEMS_SUBCATEGORY : '')
+    selectItem(item)
+    linkSingleVariation.value = target.targetType === 'variacao'
+    selectorSearch.value = ''
+  }
+  setModalTarget(target)
+}
+
+function toggleVariationMode() {
+  linkSingleVariation.value = !linkSingleVariation.value
+  setModalTarget(linkSingleVariation.value ? null : makeItemTarget(selectedItem.value))
+}
+
+async function confirmSelector() {
+  if (!modalSelectedTarget.value || selectorSaving.value) return
+  const { targetType, targetKey, targetLabel } = modalSelectedTarget.value
+  const current = roleRules.value.find(rule => rule.id === editingRuleId.value)
+  const needsCaList = targetType === 'item' && (approvedCaEdited.value || current?.targetType !== 'item' || current.targetKey !== targetKey)
+  const changes = { targetType, targetKey, targetLabel }
+  if (needsCaList) {
+    changes.allowedCas = approvedCas.value
+    if (!changes.allowedCas.length) {
+      error('Marque pelo menos uma variação com CA.')
+      return
+    }
+  }
+  if (editingRuleId.value) {
+    selectorSaving.value = true
+    try {
+      const result = await editRoleRule(editingRuleId.value, changes)
+      if (!result.ok) { error(result.error); return }
+      success('EPI do cargo alterado.')
+      selectorOpen.value = false
+      editingRuleId.value = null
+    } finally { selectorSaving.value = false }
+    return
+  }
+  if (!isLoggedIn?.value || !selectedRoleName.value) return
+  selectorSaving.value = true
+  try {
+    const result = await addRoleRule(selectedRoleName.value, modalSelectedTarget.value, 30, 1, { allowedCas: changes.allowedCas })
+    if (!result.ok) { error(result.error); return }
+    success('EPI vinculado ao cargo.')
+    selectorOpen.value = false
+  } catch (cause) {
+    error(cause.message || 'Não foi possível vincular o EPI.')
+  } finally {
+    selectorSaving.value = false
+  }
 }
 
 function selectGroup(group) {
@@ -281,25 +371,31 @@ function selectGroup(group) {
   selectedCategory.value = ''
   selectedSubcategory.value = ''
   selectedItemId.value = ''
-  if (selectorScope.value === 'levels') setModalTarget(makeGroupTarget(group))
+  setModalTarget(makeGroupTarget(group))
 }
 
 function selectCategory(category) {
   selectedCategory.value = category
   selectedSubcategory.value = ''
   selectedItemId.value = ''
-  if (selectorScope.value === 'levels') setModalTarget(makeCategoryTarget(selectedGroup.value, category))
+  setModalTarget(makeCategoryTarget(selectedGroup.value, category))
 }
 
 function selectSubcategory(subcategory) {
   selectedSubcategory.value = subcategory
   selectedItemId.value = ''
-  if (selectorScope.value === 'levels') setModalTarget(makeSubcategoryTarget(selectedGroup.value, selectedCategory.value, subcategory))
+  setModalTarget(makeSubcategoryTarget(selectedGroup.value, selectedCategory.value, subcategory))
 }
 
 function selectItem(item) {
   selectedItemId.value = item.id
-  if (selectorScope.value === 'levels') setModalTarget(makeItemTarget(item))
+  if (approvedItemId.value !== item.id) {
+    approvedItemId.value = item.id
+    approvedCas.value = []
+    approvedCaEdited.value = true
+  }
+  linkSingleVariation.value = false
+  setModalTarget(makeItemTarget(item))
 }
 
 function resetSelectorPath(level = 'root') {
@@ -315,31 +411,48 @@ function resetSelectorPath(level = 'root') {
     selectedCategory.value = ''
     selectedSubcategory.value = ''
     selectedItemId.value = ''
-    if (selectorScope.value === 'levels') setModalTarget(makeGroupTarget(selectedGroup.value))
+    setModalTarget(makeGroupTarget(selectedGroup.value))
     return
   }
   if (level === 'category') {
     selectedSubcategory.value = ''
     selectedItemId.value = ''
-    if (selectorScope.value === 'levels') setModalTarget(makeCategoryTarget(selectedGroup.value, selectedCategory.value))
+    setModalTarget(makeCategoryTarget(selectedGroup.value, selectedCategory.value))
     return
   }
   selectedItemId.value = ''
-  if (selectorScope.value === 'levels') setModalTarget(makeSubcategoryTarget(selectedGroup.value, selectedCategory.value, selectedSubcategory.value))
+  setModalTarget(makeSubcategoryTarget(selectedGroup.value, selectedCategory.value, selectedSubcategory.value))
 }
 
-const rulesForRole = computed(() =>
-  roleRules.value.filter(rule => rule.roleName === selectedRoleName.value)
+const allRulesForRole = computed(() =>
+  roleRules.value.filter(rule => normalizeSearchText(rule.roleName) === normalizeSearchText(selectedRoleName.value))
 )
-const activeRuleCount = computed(() => rulesForRole.value.filter(rule => rule.active).length)
+const rulesForRole = computed(() => allRulesForRole.value.filter(rule => showInactive.value || rule.active))
+const observationsByRule = computed(() => new Map(rulesForRole.value.map(rule => {
+  const compatible = catalogRowsForTarget(items.value, variations.value, rule)
+  if (!compatible.length) return [rule.id, ['Sem variação compatível']]
+  let missingCa = 0
+  for (const { variation } of compatible) {
+    const attributes = new Map(Object.entries({ ...variation.extras, ...variation.values })
+      .map(([key, value]) => [normalizeSearchText(key), String(value ?? '').trim()]))
+    if (!['ca', 'numero ca', 'numero do ca', 'certificado de aprovacao'].some(key => attributes.get(key))) missingCa++
+  }
+  const observations = []
+  if (missingCa) observations.push(missingCa === compatible.length ? 'CA pendente' : `${missingCa} de ${compatible.length} variações sem CA`)
+  return [rule.id, observations]
+})))
+function automaticObservations(rule) {
+  const note = normalizeSearchText(ruleObservationDrafts.value[rule.id] ?? rule.observation)
+  return (observationsByRule.value.get(rule.id) || []).filter(observation =>
+    !note.includes(normalizeSearchText(observation))
+  )
+}
+const activeRuleCount = computed(() => allRulesForRole.value.filter(rule => rule.active).length)
+const inactiveRuleCount = computed(() => allRulesForRole.value.filter(rule => !rule.active).length)
 
-async function onAddRule() {
-  if (!isLoggedIn?.value) return
-  if (!selectedRuleTarget.value) { error('Selecione um EPI.'); return }
-  const result = await addRoleRule(selectedRoleName.value, selectedRuleTarget.value, 30, 1)
-  if (!result.ok) { error(result.error); return }
-  success('EPI vinculado ao cargo.')
-  selectedRuleTarget.value = null
+function showRole(roleName) {
+  selectedRoleName.value = activeRoles.value.find(role => normalizeSearchText(role.name) === normalizeSearchText(roleName))?.name || roleName
+  view.value = 'role'
 }
 
 async function onToggleRule(rule) {
@@ -356,10 +469,14 @@ async function onDeleteRule(rule) {
 async function onUpdateRule(rule) {
   const days = Number(ruleDayDrafts.value[rule.id] ?? rule.days)
   const quantity = Number(ruleQuantityDrafts.value[rule.id] ?? rule.quantity)
-  const result = await editRoleRule(rule.id, { days, quantity })
+  const result = await editRoleRule(rule.id, { days, quantity, usageReason: ruleReasonDrafts.value[rule.id] ?? rule.usageReason ?? '',
+    observation: ruleObservationDrafts.value[rule.id] ?? rule.observation ?? '',
+  })
   if (!result.ok) { error(result.error); return }
   ruleDayDrafts.value[rule.id] = result.rule.days
   ruleQuantityDrafts.value[rule.id] = result.rule.quantity
+  ruleReasonDrafts.value[rule.id] = result.rule.usageReason
+  ruleObservationDrafts.value[rule.id] = result.rule.observation
   success('Regra do cargo atualizada.')
 }
 
@@ -385,158 +502,167 @@ function setRuleQuantityValue(rule, value) {
   <div class="ds-page-stack">
     <header class="ds-page-header">
       <div>
-        <h1 class="ds-page-title">Editar EPIs</h1>
-        <p class="ds-page-subtitle">Defina os equipamentos obrigatórios, a quantidade e a periodicidade de entrega por cargo.</p>
+        <h1 class="ds-page-title">Gestão de EPIs</h1>
+        <p class="ds-page-subtitle">Compare os prazos por equipamento e ajuste os vínculos de cada cargo.</p>
       </div>
     </header>
 
-    <section class="ds-panel p-4">
-      <div class="grid gap-4 md:grid-cols-[minmax(16rem,24rem)_1fr] md:items-end">
-        <div>
-          <label class="ds-label">Cargo</label>
-          <div class="relative">
-            <button
-              type="button"
-              role="combobox"
-              :aria-expanded="rolePickerOpen"
-              class="ds-input flex w-full items-center justify-between gap-2 text-left"
-              @click="openRolePicker"
-            >
-              <span class="truncate font-semibold">{{ selectedRoleName || 'Selecione um cargo' }}</span>
-              <svg class="h-4 w-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-            </button>
-            <div v-if="rolePickerOpen" class="fixed inset-0 z-10" @click="rolePickerOpen = false"></div>
-            <div v-if="rolePickerOpen" role="listbox" class="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
-              <div class="border-b border-gray-200 p-2 dark:border-gray-700">
-                <input
-                  v-model="roleSearch"
-                  type="search"
-                  autocomplete="off"
-                  autofocus
-                  placeholder="Buscar cargo..."
-                  class="ds-input"
-                  @keydown.escape.stop="rolePickerOpen = false"
-                  @keydown.enter.prevent="filteredRoles.length === 1 && selectRole(filteredRoles[0])"
-                />
-              </div>
-              <div class="max-h-64 overflow-y-auto py-1">
-                <button
-                  v-for="role in filteredRoles"
-                  :key="role.id"
-                  type="button"
-                  role="option"
-                  :aria-selected="selectedRoleName === role.name"
-                  class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-                  :class="selectedRoleName === role.name ? 'bg-primary-50 font-semibold text-primary-700 dark:bg-primary-950 dark:text-primary-300' : 'text-gray-800 dark:text-gray-100'"
-                  @click="selectRole(role)"
-                >
-                  <span class="truncate">{{ role.name }}</span>
-                  <svg v-if="selectedRoleName === role.name" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-                </button>
-                <p v-if="!filteredRoles.length" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">Nenhum cargo encontrado.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <p class="text-sm text-gray-500 dark:text-gray-400 md:pb-2">
-          <span class="font-semibold text-gray-900 dark:text-gray-100">{{ activeRuleCount }}</span>
-          {{ activeRuleCount === 1 ? 'regra ativa' : 'regras ativas' }} para este cargo
-        </p>
-      </div>
-    </section>
+    <nav class="flex flex-wrap gap-2" aria-label="Visões da gestão de EPIs">
+      <button v-for="option in [{ key: 'overview', label: 'Visão geral' }, { key: 'general', label: 'Controle geral' }, { key: 'role', label: 'Por cargo' }]" :key="option.key" type="button" class="min-h-10 rounded-lg border px-4 py-2 text-sm font-semibold" :class="view === option.key ? 'border-primary-600 bg-primary-600 text-[var(--ds-primary-text)]' : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'" :aria-pressed="view === option.key" @click="view = option.key">{{ option.label }}</button>
+    </nav>
 
-    <section class="grid items-start gap-4 xl:grid-cols-[24rem_minmax(0,1fr)]">
-      <aside class="ds-panel overflow-hidden">
-        <div class="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Novo EPI obrigatório</h2>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Vincule um item ou bloco do catálogo ao cargo selecionado.</p>
+    <EpiGeneralControl v-if="view === 'general'" @open-role="showRole" />
+    <EpiOverview v-if="view === 'overview'" @open-role="showRole" />
+
+    <template v-if="view === 'role'">
+    <section class="grid items-start gap-4 lg:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]">
+      <aside class="ds-panel overflow-hidden lg:sticky lg:top-4" aria-label="Cargos por setor">
+        <div class="border-b border-gray-200 p-3 dark:border-gray-700">
+          <label for="epi-role-search" class="ds-label">Cargos por setor</label>
+          <input id="epi-role-search" v-model="roleSearch" type="search" autocomplete="off" placeholder="Buscar cargo ou setor..." class="ds-input" />
+          <button
+            type="button"
+            class="mt-2 w-full rounded-md border px-2 py-2 text-left text-xs font-semibold"
+            :class="onlyRolesWithEpi ? 'border-primary-600 bg-primary-50 text-primary-700 dark:bg-primary-950 dark:text-primary-300' : 'border-gray-200 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'"
+            :aria-pressed="onlyRolesWithEpi"
+            @click="onlyRolesWithEpi = !onlyRolesWithEpi"
+          >Só cargos com EPI</button>
         </div>
-        <div class="space-y-4 p-4">
-          <div>
-            <label class="ds-label">EPI do catálogo</label>
+        <div class="max-h-64 overflow-y-auto px-2 py-2 lg:max-h-[65vh]">
+          <div v-for="group in roleGroups" :key="group.name" class="pb-2">
+            <h3 class="px-2 pb-1 pt-2 text-xs font-semibold text-gray-500 dark:text-gray-400">{{ group.name }}</h3>
             <button
+              v-for="role in group.roles"
+              :key="role.id"
               type="button"
-              class="ds-input min-h-16 w-full text-left transition-colors hover:border-primary-500"
-              @click="openSelector('rule')"
-            >
-              <span class="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ selectedRuleTarget ? targetTypeLabels[selectedRuleTarget.targetType] : 'Selecionar' }}</span>
-              <span class="mt-1 block truncate font-semibold text-gray-900 dark:text-gray-100">{{ selectedRuleTarget ? readableTargetLabel(selectedRuleTarget) : 'Escolher no catálogo' }}</span>
-            </button>
+              class="block w-full rounded-md px-2 py-2 text-left text-sm transition-colors"
+              :class="selectedRoleName === role.name ? 'bg-primary-50 font-semibold text-primary-700 dark:bg-primary-950 dark:text-primary-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800'"
+              :aria-pressed="selectedRoleName === role.name"
+              @click="selectedRoleName = role.name"
+            >{{ role.name }}</button>
           </div>
-          <button type="button" class="min-h-10 w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-700 dark:disabled:bg-gray-700 dark:disabled:text-gray-300" :disabled="!selectedRoleName || !selectedRuleTarget" @click="onAddRule">Adicionar ao cargo</button>
+          <p v-if="!roleGroups.length" class="px-2 py-3 text-sm text-gray-500 dark:text-gray-400">Nenhum cargo encontrado.</p>
         </div>
       </aside>
 
-      <div class="ds-panel overflow-hidden">
+      <div class="ds-panel min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
           <div>
-            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">EPIs obrigatórios</h2>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ selectedRoleName || 'Selecione um cargo' }}</p>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ selectedRoleName || 'Selecione um cargo' }}</h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ activeRuleCount }} {{ activeRuleCount === 1 ? 'EPI ativo' : 'EPIs ativos' }}</p>
+            <label v-if="inactiveRuleCount" class="mt-2 flex items-center gap-2 text-xs"><input v-model="showInactive" type="checkbox" /> Mostrar inativos ({{ inactiveRuleCount }})</label>
           </div>
-          <span class="ds-chip tabular-nums">{{ rulesForRole.length }}</span>
+          <button
+            v-if="isLoggedIn"
+            type="button"
+            class="min-h-10 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700 disabled:opacity-50"
+            :disabled="!selectedRoleName"
+            aria-haspopup="dialog"
+            @click="openSelector('rule')"
+          ><span aria-hidden="true">＋</span> Adicionar EPI</button>
         </div>
-        <div v-if="rulesForRole.length" class="divide-y divide-gray-100 dark:divide-gray-700">
-          <article v-for="rule in rulesForRole" :key="rule.id" class="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(12rem,1fr)_8rem_11rem_auto] xl:items-end" :class="{ 'opacity-60': !rule.active }">
-            <div class="self-center">
+        <div v-if="rulesForRole.length" class="epi-rule-list divide-y divide-gray-100 dark:divide-gray-700">
+          <article v-for="rule in rulesForRole" :key="rule.id" class="epi-rule-row grid items-start gap-3 px-4 py-3 sm:grid-cols-3" :class="{ 'opacity-60': !rule.active }">
+            <div class="min-w-0">
               <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ targetTypeLabels[rule.targetType] }}</p>
               <template v-if="targetVariationRow(rule)">
                 <p class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ targetVariationRow(rule).item.name }}</p>
                 <AttributeBadges class="mt-1" :item="targetVariationRow(rule).item" :variation="targetVariationRow(rule).variation" compact />
               </template>
               <p v-else class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ readableTargetLabel(rule) }}</p>
+              <p v-if="rule.targetType === 'item' && rule.allowedCas?.some(Boolean)" class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                CAs aceitos · {{ rule.allowedCas.filter(Boolean).join(', ') }}
+              </p>
+              <p v-if="rule.personId" class="mt-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                Somente {{ personNames.get(rule.personId) || 'pessoa vinculada' }}
+              </p>
             </div>
-            <div>
-              <label class="ds-label">Quantidade</label>
-              <input
-                :value="ruleQuantityValue(rule)"
-                type="number"
-                min="1"
-                step="1"
-                class="ds-input"
-                @input="setRuleQuantityValue(rule, $event.target.value)"
-              />
+            <div class="min-w-0">
+              <label :for="`usage-reason-${rule.id}`" class="ds-label">Motivo de uso</label>
+              <textarea
+                :id="`usage-reason-${rule.id}`"
+                :value="ruleReasonDrafts[rule.id] ?? rule.usageReason ?? ''"
+                rows="2"
+                maxlength="2000"
+                class="epi-reason ds-input w-full resize-y text-sm"
+                placeholder="Motivo indicado no PGR para este cargo"
+                @input="ruleReasonDrafts[rule.id] = $event.target.value"
+              ></textarea>
             </div>
-            <div>
-              <label class="ds-label">Periodicidade</label>
-              <div class="flex items-center gap-2">
+            <div class="min-w-0">
+              <label :for="`epi-observation-${rule.id}`" class="ds-label">Observação</label>
+              <p v-if="automaticObservations(rule).length" class="mb-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                {{ automaticObservations(rule).join(' · ') }}
+              </p>
+              <textarea
+                :id="`epi-observation-${rule.id}`"
+                :value="ruleObservationDrafts[rule.id] ?? rule.observation ?? ''"
+                rows="2"
+                maxlength="2000"
+                class="epi-reason ds-input w-full resize-y text-sm"
+                placeholder="Adicionar observação"
+                @input="ruleObservationDrafts[rule.id] = $event.target.value"
+              ></textarea>
+            </div>
+            <div class="epi-rule-fields flex flex-wrap items-end gap-2 sm:col-span-3">
+              <div class="epi-quantity w-24">
+                <label class="ds-label">Quantidade</label>
                 <input
-                  :value="ruleDayValue(rule)"
+                  :value="ruleQuantityValue(rule)"
                   type="number"
                   min="1"
                   step="1"
                   class="ds-input"
-                  @input="setRuleDayValue(rule, $event.target.value)"
+                  @input="setRuleQuantityValue(rule, $event.target.value)"
                 />
-                <span class="text-xs text-gray-500 dark:text-gray-400">dias</span>
               </div>
-            </div>
-            <div class="flex flex-wrap items-center gap-2 xl:justify-end">
-              <button type="button" class="min-h-9 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700" @click="onUpdateRule(rule)">Atualizar</button>
-              <button type="button" :aria-pressed="rule.active" class="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold" :class="rule.active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'" @click="onToggleRule(rule)">{{ rule.active ? 'Ativo' : 'Inativo' }}</button>
-              <button type="button" class="min-h-9 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/30" @click="onDeleteRule(rule)">Excluir</button>
+              <div class="epi-period w-32">
+                <label class="ds-label">Periodicidade</label>
+                <div class="flex items-center gap-2">
+                  <input
+                    :value="ruleDayValue(rule)"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="ds-input"
+                    @input="setRuleDayValue(rule, $event.target.value)"
+                  />
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ Number(ruleDayValue(rule)) === 0 ? 'sem controle' : 'dias' }}</span>
+                </div>
+              </div>
+              <div class="epi-rule-actions flex flex-wrap items-center gap-1.5 sm:ml-auto">
+                <button type="button" class="min-h-9 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800" aria-haspopup="dialog" @click="openSelector('rule', rule)">Editar EPI</button>
+                <button type="button" class="min-h-9 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700" @click="onUpdateRule(rule)">Atualizar</button>
+                <button type="button" :aria-pressed="rule.active" class="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold" :class="rule.active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'" @click="onToggleRule(rule)">{{ rule.active ? 'Ativo' : 'Inativo' }}</button>
+                <button type="button" class="min-h-9 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/30" @click="onDeleteRule(rule)">Excluir</button>
+              </div>
             </div>
           </article>
         </div>
         <div v-else class="p-8 text-center">
           <p class="text-sm font-semibold text-gray-800 dark:text-gray-200">Nenhum EPI obrigatório</p>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Use o painel ao lado para criar a primeira regra deste cargo.</p>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Use Adicionar EPI para vincular a primeira regra deste cargo.</p>
         </div>
       </div>
     </section>
+
+    </template>
 
     <AppDialog
         v-if="selectorOpen"
         visible
         aria-label="Selecionar EPI no catálogo"
+        :persistent="selectorSaving"
         @close="closeSelector"
       >
         <section class="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           <header class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 p-4 dark:border-gray-700">
             <div>
               <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                {{ selectorContext === 'rule' ? 'Selecionar EPI para cargo' : 'Selecionar EPI para periodicidade' }}
+                {{ editingRuleId ? 'Editar EPI do cargo' : selectorContext === 'rule' ? 'Selecionar EPI para cargo' : 'Selecionar EPI para periodicidade' }}
               </p>
-              <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Catálogo em blocos</h3>
+              <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingRuleId ? 'Alterar item vinculado' : selectedRoleName }}</h3>
+              <p v-if="editingRuleId" class="mt-1 text-sm text-gray-500 dark:text-gray-400">Escolha outro item ou variação para a regra.</p>
             </div>
             <button
               type="button"
@@ -546,28 +672,12 @@ function setRuleQuantityValue(rule, value) {
           </header>
 
           <div class="border-b border-gray-200 p-4 dark:border-gray-700">
-            <div class="grid gap-3 lg:grid-cols-[1fr_auto]">
-              <input
-                v-model="selectorSearch"
-                type="search"
-                placeholder="Pesquisar grupo, categoria, item ou variação..."
-                class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-              />
-              <div class="inline-flex rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
-                <button
-                  type="button"
-                  class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors"
-                  :class="selectorScope === 'levels' ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
-                  @click="selectorScope = 'levels'"
-                >Níveis específicos</button>
-                <button
-                  type="button"
-                  class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors"
-                  :class="selectorScope === 'variations' ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
-                  @click="selectorScope = 'variations'; if (modalSelectedTarget?.targetType !== 'variacao') modalSelectedTarget = null"
-                >Só variações</button>
-              </div>
-            </div>
+            <input
+              v-model="selectorSearch"
+              type="search"
+              placeholder="Pesquisar grupo, categoria, item ou variação..."
+              class="ds-input w-full"
+            />
           </div>
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
@@ -580,7 +690,7 @@ function setRuleQuantityValue(rule, value) {
                 :class="modalSelectedTarget?.targetType === target.targetType && modalSelectedTarget?.targetKey === target.targetKey
                   ? 'border-primary-500 bg-primary-50 text-primary-900 dark:bg-primary-900/20 dark:text-primary-100'
                   : 'border-gray-200 text-gray-900 dark:border-gray-700 dark:text-gray-100'"
-                @click="setModalTarget(target)"
+                @click="chooseSearchTarget(target)"
               >
                 <span class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400">{{ targetTypeLabels[target.targetType] }}</span>
                 <template v-if="targetVariationRow(target)">
@@ -624,12 +734,12 @@ function setRuleQuantityValue(rule, value) {
                 </template>
               </div>
 
-              <div v-if="!selectedGroup" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              <div v-if="!selectedItemId && !selectedGroup" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 <button
                   v-for="group in groups"
                   :key="group"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectGroup(group)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -644,12 +754,12 @@ function setRuleQuantityValue(rule, value) {
                 </button>
               </div>
 
-              <div v-else-if="!selectedCategory" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              <div v-else-if="!selectedItemId && !selectedCategory" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 <button
                   v-for="category in categoriesForGroup"
                   :key="category"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectCategory(category)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -664,12 +774,12 @@ function setRuleQuantityValue(rule, value) {
                 </button>
               </div>
 
-              <div v-else-if="subcategoriesForCategory.length && !selectedSubcategory" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              <div v-else-if="!selectedItemId && subcategoriesForCategory.length && !selectedSubcategory" class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 <button
                   v-for="subcategory in subcategoriesForCategory"
                   :key="subcategory"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectSubcategory(subcategory)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -689,7 +799,7 @@ function setRuleQuantityValue(rule, value) {
                   v-for="item in itemsForSelection"
                   :key="item.id"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectItem(item)"
                 >
                   <p class="mb-1 truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{{ item.name }}</p>
@@ -703,46 +813,28 @@ function setRuleQuantityValue(rule, value) {
                 </p>
               </div>
 
-              <div v-else>
-                <div v-if="variationsForSelectedItem.length" class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                  <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
-                    <thead class="bg-gray-50 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800/70 dark:text-gray-400">
-                      <tr>
-                        <th class="px-4 py-3">Variação</th>
-                        <th class="px-4 py-3 text-right">Estoque</th>
-                        <th class="px-4 py-3 text-right">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
-                      <tr
-                        v-for="{ variation, item } in variationsForSelectedItem"
-                        :key="variation.id"
-                        class="cursor-pointer transition-colors hover:bg-primary-50/70 dark:hover:bg-primary-950/20"
-                        @click="setModalTarget(makeVariationTarget(variation, item))"
-                      >
-                        <td class="px-4 py-3 text-gray-900 dark:text-gray-100">
-                          <p class="font-semibold">{{ item?.name }}</p>
-                          <AttributeBadges class="mt-1" :item="item" :variation="variation" compact />
-                        </td>
-                        <td class="px-4 py-3 text-right font-semibold" :class="variation.stock > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'">
-                          {{ variation.stock }} {{ item?.unit }}
-                        </td>
-                        <td class="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            class="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700"
-                            @click.stop="setModalTarget(makeVariationTarget(variation, item))"
-                          >
-                            Selecionar
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+              <div v-else-if="selectedItem" class="space-y-3">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 class="text-sm font-semibold">{{ selectedItem.name }}</h3>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{ linkSingleVariation ? 'Escolha uma variação específica.' : 'Marque as variações para liberar seus CAs. Outros tamanhos com o mesmo CA também ficam disponíveis.' }}
+                    </p>
+                  </div>
+                  <button type="button" class="text-xs font-semibold text-primary-700 hover:underline dark:text-primary-300" @click="toggleVariationMode">
+                    {{ linkSingleVariation ? 'Vincular ao item com CAs aceitos' : 'Vincular uma única variação' }}
+                  </button>
                 </div>
-                <p v-else class="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                  Nenhuma variação encontrada.
-                </p>
+                <EpiVariationChoices
+                  :item="selectedItem"
+                  :variations="variationsForSelectedItem"
+                  :allowed-cas="approvedCas"
+                  :single="linkSingleVariation"
+                  :selected-id="modalSelectedTarget?.targetType === 'variacao' ? modalSelectedTarget.targetKey : ''"
+                  :disabled="selectorSaving"
+                  @toggle-ca="toggleApprovedCa"
+                  @select="setModalTarget(makeVariationTarget($event, selectedItem))"
+                />
               </div>
             </div>
           </div>
@@ -755,15 +847,63 @@ function setRuleQuantityValue(rule, value) {
                 <AttributeBadges class="mt-1" :item="targetVariationRow(modalSelectedTarget).item" :variation="targetVariationRow(modalSelectedTarget).variation" compact />
               </template>
               <p v-else class="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{{ modalSelectedLabel }}</p>
+              <p v-if="modalSelectedTarget?.targetType === 'item' && approvedCas.length" class="text-xs text-gray-600 dark:text-gray-300">
+                CAs aceitos · {{ approvedCas.join(', ') }}
+              </p>
             </div>
             <button
               type="button"
               class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-[var(--ds-primary-text)] hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-700 dark:disabled:bg-gray-700 dark:disabled:text-gray-300"
-              :disabled="!modalSelectedTarget"
+              :disabled="!modalSelectedTarget || selectorSaving"
               @click="confirmSelector"
-            >Usar seleção</button>
+            >{{ selectorSaving ? 'Salvando...' : editingRuleId ? 'Salvar EPI' : 'Vincular ao cargo' }}</button>
           </footer>
         </section>
     </AppDialog>
   </div>
 </template>
+
+<style scoped>
+.epi-rule-list {
+  container-type: inline-size;
+}
+
+.epi-reason {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.epi-reason:hover,
+.epi-reason:focus-visible {
+  border-color: var(--ds-border);
+  background: var(--ds-surface);
+}
+
+@container (min-width: 64rem) {
+  .epi-rule-row {
+    grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 1.5fr) minmax(10rem, 1.3fr) 5.5rem 7.5rem 10rem;
+  }
+
+  .epi-rule-fields {
+    display: contents;
+  }
+
+  .epi-quantity,
+  .epi-period,
+  .epi-rule-actions {
+    width: 100%;
+  }
+
+  .epi-rule-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+  }
+
+  .epi-rule-actions button {
+    min-height: 2rem;
+    padding-inline: 0.35rem;
+  }
+}
+</style>

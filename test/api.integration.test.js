@@ -50,7 +50,7 @@ function sessionToken(response) {
   return decodeURIComponent(match[1])
 }
 
-test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout: 20_000 }, async t => {
+async function startTestServer(t) {
   const tempDir = await mkdtemp(join(os.tmpdir(), 'estoque-api-'))
   const dbPath = join(tempDir, 'test.db')
   const port = await freePort()
@@ -64,6 +64,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
       DB_PATH: dbPath,
       PHOTO_UPLOAD_DIR: join(tempDir, 'photo-uploads'),
       BACKUP_ENABLED: 'false',
+      BACKUP_DIR: join(tempDir, 'backups'),
       CORS_ORIGINS: '',
       GEMINI_API_KEY: '',
       GOOGLE_API_KEY: '',
@@ -83,6 +84,114 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   })
 
   await waitForServer(url, child, () => output)
+  return { url, dbPath }
+}
+
+test('cargos ignoram acentos e motivo de uso do EPI persiste sem alterar prazo', { timeout: 20_000 }, async t => {
+  const { url } = await startTestServer(t)
+  const login = await jsonRequest(url, '/api/auth/login', { body: { login: 'admin', pin: 'admin123' } })
+  assert.equal(login.response.status, 200)
+  const token = sessionToken(login.response)
+  assert.equal((await jsonRequest(url, '/api/auth/users/user_admin', { token, method: 'PUT', body: { pin: 'senha-local-123' } })).response.status, 200)
+  const role = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Junior' } })
+  assert.equal(role.response.status, 200)
+  assert.equal((await jsonRequest(url, '/api/roles', { token, body: { name: '  MECANICO  JUNIOR ' } })).response.status, 409)
+  const other = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Pleno' } })
+  assert.equal((await jsonRequest(url, `/api/roles/${other.data.id}`, { token, method: 'PUT', body: { name: 'Mecanico Junior' } })).response.status, 409)
+  const rule = await jsonRequest(url, '/api/epis/role-rules', { token, body: {
+    roleName: 'Mecânico Junior', targetType: 'categoria', targetKey: 'EPI|Proteção dos pés', days: 0, quantity: 4, usageReason: '  Motivo do PGR  ',
+  } })
+  assert.equal(rule.response.status, 200)
+  assert.equal(rule.data.usageReason, 'Motivo do PGR')
+  const update = body => jsonRequest(url, `/api/epis/role-rules/${rule.data.id}`, { token, method: 'PUT', body })
+  const changed = await update({ usageReason: 'Risco descrito no PGR' })
+  assert.equal(changed.response.status, 200)
+  assert.equal(changed.data.days, 0)
+  assert.equal(changed.data.quantity, 4)
+  assert.equal((await update({ usageReason: {} })).response.status, 400)
+  assert.equal((await update({ usageReason: 'x'.repeat(2001) })).response.status, 400)
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules')).data.find(row => row.id === rule.data.id).usageReason, 'Risco descrito no PGR')
+  assert.equal((await update({ active: false })).data.usageReason, 'Risco descrito no PGR')
+  const filtered = await update({ requiredAttributes: { Bico: 'Composite' }, allowedCas: ['26092', ''] })
+  assert.equal(filtered.response.status, 200)
+  assert.equal(filtered.data.active, false)
+  assert.deepEqual(filtered.data.requiredAttributes, { Bico: 'Composite' })
+  assert.deepEqual(filtered.data.allowedCas, ['26092', ''])
+  assert.equal((await update({ requiredAttributes: { Bico: 'Composite', bico: 'Aço' } })).response.status, 400)
+  const persisted = (await jsonRequest(url, '/api/epis/role-rules')).data.find(row => row.id === rule.data.id)
+  assert.deepEqual(persisted.requiredAttributes, { Bico: 'Composite' })
+  const cleared = await update({ requiredAttributes: null, allowedCas: null })
+  assert.equal(cleared.data.requiredAttributes, null)
+  assert.equal(cleared.data.allowedCas, null)
+  const observed = await update({ observation: '  Aguardando CA e modelo  ' })
+  assert.equal(observed.data.observation, 'Aguardando CA e modelo')
+  assert.equal((await update({ days: 60 })).data.observation, 'Aguardando CA e modelo')
+  assert.equal((await update({ observation: 123 })).response.status, 400)
+})
+
+test('periodicidades em lote exigem admin, preservam motivos e cancelam tudo em conflito', { timeout: 20_000 }, async t => {
+  const { url } = await startTestServer(t)
+  const login = await jsonRequest(url, '/api/auth/login', { body: { login: 'admin', pin: 'admin123' } })
+  const token = sessionToken(login.response)
+  assert.equal((await jsonRequest(url, '/api/auth/users/user_admin', { token, method: 'PUT', body: { pin: 'senha-local-123' } })).response.status, 200)
+  const create = (roleName, days, active = true) => jsonRequest(url, '/api/epis/role-rules', { token, body: {
+    roleName, days, active, targetType: 'item', targetKey: 'test-item', targetLabel: 'Luva', quantity: 2, usageReason: `Motivo ${roleName}`,
+  } })
+  const first = (await create('Mecânico', 30)).data
+  const second = (await create('Operador', 90)).data
+  const inactive = (await create('Inativo', 15, false)).data
+  const list = async () => (await jsonRequest(url, '/api/epis/role-rules')).data
+  const before = await list()
+  const change = (rule, days, previousDays = rule.days) => ({ id: rule.id, days, previousDays })
+  const batch = changes => jsonRequest(url, '/api/epis/role-rules/periods', { token, method: 'PUT', body: { changes } })
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules/periods', { method: 'PUT', body: { changes: [change(first, 60)] } })).response.status, 401)
+  const visitor = await jsonRequest(url, '/api/auth/users', { token, body: { name: 'Visitante', username: 'visitante', role: 'visitante', pin: 'visitante-inicial-123' } })
+  const visitorLogin = await jsonRequest(url, '/api/auth/login', { body: { login: 'visitante', pin: 'visitante-inicial-123' } })
+  const visitorToken = sessionToken(visitorLogin.response)
+  await jsonRequest(url, `/api/auth/users/${visitor.data.id}`, { token: visitorToken, method: 'PUT', body: { pin: 'visitante-seguro-456' } })
+  assert.equal((await jsonRequest(url, '/api/epis/role-rules/periods', { token: visitorToken, method: 'PUT', body: { changes: [change(first, 60)] } })).response.status, 403)
+  assert.equal((await batch([change(first, 60), change(second, 60, 30)])).response.status, 409)
+  assert.deepEqual(await list(), before)
+  assert.equal((await batch([change(first, 60), change(inactive, 60)])).response.status, 409)
+  assert.deepEqual(await list(), before)
+  for (const changes of [[], [change(first, -1)], [change(first, 1.5)], [change(first, null)], [change(first, 60), change(first, 90)]]) {
+    assert.equal((await batch(changes)).response.status, 400)
+  }
+  const saved = await batch([change(first, 60), change(second, 60)])
+  assert.equal(saved.response.status, 200)
+  assert.deepEqual(await list(), before.map(rule => ({ ...rule, days: rule.active ? 60 : rule.days })))
+  assert.equal((await batch([change(first, 0, 60), change(second, 0, 60)])).response.status, 200)
+  assert.ok((await list()).filter(rule => rule.active).every(rule => rule.days === 0))
+  const batchSettings = changes => jsonRequest(url, '/api/epis/role-rules/batch', { token, method: 'PUT', body: { changes } })
+  const quantityChange = rule => ({ id: rule.id, quantity: 3, previousQuantity: 2 })
+  const snapshot = await list()
+  for (const changes of [
+    [{ id: first.id, quantity: 0, previousQuantity: 2 }],
+    [{ id: first.id, quantity: 1.5, previousQuantity: 2 }],
+    [{ id: first.id, quantity: 3 }],
+    [{ id: first.id, active: 'false', previousActive: true }],
+    [{ id: first.id, previousQuantity: 2 }],
+    [{ ...quantityChange(first), unexpected: 'ignored?' }],
+  ]) assert.equal((await batchSettings(changes)).response.status, 400)
+  assert.equal((await batchSettings([quantityChange(first), { ...quantityChange(second), previousQuantity: 1 }])).response.status, 409)
+  assert.deepEqual(await list(), snapshot)
+  assert.equal((await batchSettings([quantityChange(first), quantityChange(second)])).response.status, 200)
+  assert.deepEqual(await list(), snapshot.map(rule => rule.active ? { ...rule, quantity: 3 } : rule))
+  const beforeInactivation = await list()
+  const deactivate = rule => ({ id: rule.id, active: false, previousActive: true })
+  assert.equal((await batchSettings([deactivate(first), deactivate(inactive)])).response.status, 409)
+  assert.deepEqual(await list(), beforeInactivation)
+  assert.equal((await batchSettings([deactivate(first), deactivate(second)])).response.status, 200)
+  assert.deepEqual(await list(), beforeInactivation.map(rule => ({ ...rule, active: false })))
+  const reactivate = rule => ({ id: rule.id, active: true, previousActive: false })
+  assert.equal((await batchSettings([reactivate(first), { ...reactivate(second), previousActive: true }])).response.status, 409)
+  assert.deepEqual(await list(), beforeInactivation.map(rule => ({ ...rule, active: false })))
+  assert.equal((await batchSettings([reactivate(first), reactivate(second)])).response.status, 200)
+  assert.deepEqual(await list(), beforeInactivation)
+})
+
+test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout: 20_000 }, async t => {
+  const { url, dbPath } = await startTestServer(t)
 
   const health = await fetch(`${url}/api/health`, { headers: { origin: 'http://localhost:5173' } })
   assert.equal(health.status, 200)
@@ -367,13 +476,24 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { name: 'Operador Teste' },
   })
   assert.equal(role.response.status, 200)
+  const accentedRole = await jsonRequest(url, '/api/roles', { token, body: { name: 'Mecânico Junior' } })
+  assert.equal(accentedRole.response.status, 200)
+  assert.equal((await jsonRequest(url, '/api/roles', { token, body: { name: '  MECANICO  JUNIOR ' } })).response.status, 409)
+  assert.equal((await jsonRequest(url, `/api/roles/${role.data.id}`, { token, method: 'PUT', body: { name: 'Mecanico Junior' } })).response.status, 409)
 
   const person = await jsonRequest(url, '/api/people', {
     token,
-    body: { name: 'Pessoa Teste', role: 'Operador Teste', registration: 'MAT-123' },
+    body: { name: 'Pessoa Teste', role: 'Operador Teste', registration: 'MAT-123', workHours: '21:35 – 05:10' },
   })
   assert.equal(person.response.status, 200)
   assert.equal(person.data.registration, 'MAT-123')
+  assert.equal(person.data.workHours, '21:35 - 05:10')
+  const changeWorkHours = workHours => jsonRequest(url, `/api/people/${person.data.id}`, {
+    token, method: 'PUT', body: { workHours },
+  })
+  assert.equal((await changeWorkHours('07:00 - 27:00')).response.status, 400)
+  assert.equal((await changeWorkHours('07:00 - 17:00 (01:00 ALMOÇO)')).response.status, 400)
+  assert.equal((await changeWorkHours('07:00 - 17:00')).data.workHours, '07:00 - 17:00')
 
   const renamedRole = await jsonRequest(url, `/api/roles/${role.data.id}`, {
     method: 'PUT',
@@ -381,14 +501,16 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { name: 'Operador Atualizado', description: '', active: true },
   })
   assert.equal(renamedRole.response.status, 200)
-  const peopleAfterRole = await jsonRequest(url, '/api/people')
+  const peopleAfterRole = await jsonRequest(url, '/api/people', { token })
   assert.equal(peopleAfterRole.data.find(row => row.id === person.data.id).role, 'Operador Atualizado')
+  assert.equal(peopleAfterRole.data.find(row => row.id === person.data.id).workHours, '07:00 - 17:00')
 
   const item = await jsonRequest(url, '/api/items', {
     token,
     body: { name: 'Rolamento de teste', group: 'Mecanica', unit: 'UN' },
   })
   assert.equal(item.response.status, 200)
+  assert.equal(item.data.minStock, null)
 
   const duplicateItem = await jsonRequest(url, '/api/items', {
     token,
@@ -397,11 +519,162 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(duplicateItem.response.status, 409)
   assert.match(duplicateItem.data.error, /já existe este item no catálogo/i)
 
+  const renamedItem = await jsonRequest(url, `/api/items/${item.data.id}`, {
+    method: 'PUT',
+    token,
+    body: { ...item.data, name: 'Rolamento principal' },
+  })
+  assert.equal(renamedItem.response.status, 200)
+  assert.equal(renamedItem.data.name, 'Rolamento principal')
+
   const variation = await jsonRequest(url, '/api/items/variations', {
     token,
-    body: { itemId: item.data.id, values: { medida: '10mm' }, stock: 2 },
+    body: { itemId: item.data.id, values: { medida: '10mm' }, stock: 7 },
   })
   assert.equal(variation.response.status, 200)
+  assert.equal(variation.data.minStock, null)
+
+  const importPayload = {
+    mappings: [{ sourceName: 'ROLAMENTO DE TESTE 10MM', variationId: variation.data.id }],
+    formerPeople: [{
+      name: 'Ex Funcionário',
+      role: 'Mecânico',
+      aliases: ['EX FUNCIONARIO ANTIGO'],
+    }],
+    rows: [
+      {
+        type: 'entrada',
+        rowNumber: 2,
+        sourceName: 'ROLAMENTO DE TESTE 10MM',
+        qty: 5,
+        date: '2025-01-02T12:00:00.000Z',
+        supplier: '',
+        unitCost: null,
+      },
+      {
+        type: 'saida',
+        rowNumber: 2,
+        sourceName: 'ROLAMENTO DE TESTE 10MM',
+        qty: 3,
+        date: '2025-01-03T12:00:00.000Z',
+        requestedBy: 'EX FUNCIONARIO ANTIGO',
+        destination: 'Manutenção',
+      },
+    ],
+    minimumStocks: [{ sourceName: 'ROLAMENTO DE TESTE 10MM', minStock: 0 }],
+  }
+  const operatorCannotImportHistory = await jsonRequest(url, '/api/movements/import-history', {
+    token: operatorToken,
+    body: importPayload,
+  })
+  assert.equal(operatorCannotImportHistory.response.status, 403)
+
+  const invalidMinimum = await jsonRequest(url, '/api/movements/import-history', {
+    token,
+    body: { ...importPayload, minimumStocks: [{ sourceName: 'ROLAMENTO DE TESTE 10MM', minStock: null }] },
+  })
+  assert.equal(invalidMinimum.response.status, 400)
+
+  const importedHistory = await jsonRequest(url, '/api/movements/import-history', {
+    token,
+    body: importPayload,
+  })
+  assert.equal(importedHistory.response.status, 200)
+  assert.deepEqual(importedHistory.data, {
+    movementsCreated: 2,
+    movementsUpdated: 0,
+    movementsSkipped: 0,
+    peopleCreated: 1,
+    minimumStocksUpdated: 1,
+  })
+
+  const legacyImportDb = new Database(dbPath)
+  legacyImportDb.prepare(`
+    UPDATE movements
+    SET affects_stock = 0, stock_before = 7, stock_after = 7
+    WHERE id GLOB 'mov_imp_*'
+  `).run()
+  legacyImportDb.prepare('UPDATE variations SET stock = 0 WHERE id = ?').run(variation.data.id)
+  legacyImportDb.close()
+
+  const importedAgain = await jsonRequest(url, '/api/movements/import-history', {
+    token,
+    body: importPayload,
+  })
+  assert.equal(importedAgain.data.movementsCreated, 0)
+  assert.equal(importedAgain.data.movementsSkipped, 2)
+  assert.equal(importedAgain.data.peopleCreated, 0)
+  assert.equal(importedAgain.data.minimumStocksUpdated, 0)
+
+  const peopleAfterImport = await jsonRequest(url, '/api/people', { token })
+  const formerPerson = peopleAfterImport.data.find(row => row.name === 'Ex Funcionário')
+  assert.ok(formerPerson)
+  assert.equal(formerPerson.active, false)
+  assert.equal(formerPerson.status, 'inativo')
+
+  const variationsAfterImport = await jsonRequest(url, '/api/items/variations')
+  assert.equal(variationsAfterImport.data.find(row => row.id === variation.data.id).stock, 2)
+  assert.equal(variationsAfterImport.data.find(row => row.id === variation.data.id).minStock, 0)
+  const movementsAfterImport = await jsonRequest(url, '/api/movements')
+  const importedExit = movementsAfterImport.data.find(row => row.requestedByPersonId === formerPerson.id)
+  const importedEntry = movementsAfterImport.data.find(row => row.id !== importedExit.id && row.id.startsWith('mov_imp_'))
+  assert.ok(importedExit)
+  assert.ok(importedEntry)
+  assert.equal(importedEntry.stockBefore, 0)
+  assert.equal(importedEntry.stockAfter, 5)
+  assert.equal(importedExit.stockBefore, 5)
+  assert.equal(importedExit.stockAfter, 2)
+  assert.equal(importedExit.affectsStock, true)
+
+  const targetItem = await jsonRequest(url, '/api/items', {
+    token,
+    body: {
+      name: 'Rolamento corrigido',
+      group: 'Pecas industriais',
+      category: 'Rolamentos',
+      unit: 'UN',
+      attributes: ['Diâmetro'],
+    },
+  })
+  assert.equal(targetItem.response.status, 200)
+  const duplicateRename = await jsonRequest(url, `/api/items/${targetItem.data.id}`, {
+    method: 'PUT',
+    token,
+    body: { ...targetItem.data, name: 'ROLAMENTO PRÍNCIPAL' },
+  })
+  assert.equal(duplicateRename.response.status, 409)
+  const operatorCannotMoveVariation = await jsonRequest(url, `/api/items/variations/${variation.data.id}`, {
+    method: 'PUT',
+    token: operatorToken,
+    body: { itemId: targetItem.data.id, values: { Diâmetro: '10mm' } },
+  })
+  assert.equal(operatorCannotMoveVariation.response.status, 403)
+  const movedVariation = await jsonRequest(url, `/api/items/variations/${variation.data.id}`, {
+    method: 'PUT',
+    token,
+    body: {
+      ...variation.data,
+      itemId: targetItem.data.id,
+      values: { Diâmetro: '10mm' },
+    },
+  })
+  assert.equal(movedVariation.response.status, 200)
+  assert.equal(movedVariation.data.itemId, targetItem.data.id)
+  assert.equal(movedVariation.data.stock, 2)
+  const movementsAfterMove = await jsonRequest(url, '/api/movements')
+  assert.equal(
+    movementsAfterMove.data.find(row => row.id === importedExit.id).itemId,
+    item.data.id,
+  )
+
+  const removedImportedExit = await jsonRequest(url, `/api/movements/${importedExit.id}`, {
+    method: 'DELETE',
+    token,
+  })
+  assert.equal(removedImportedExit.response.status, 200)
+  assert.equal(removedImportedExit.data.newStock, 5)
+  const variationsAfterImportedDelete = await jsonRequest(url, '/api/items/variations')
+  assert.equal(variationsAfterImportedDelete.data.find(row => row.id === variation.data.id).stock, 5)
 
   const epiDestination = await jsonRequest(url, '/api/destinations', {
     token,
@@ -418,21 +691,71 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { itemId: epiItem.data.id, values: { Tamanho: 'M', CA: '1234' }, stock: 6 },
   })
   assert.equal(epiVariation.response.status, 200)
+  const incompatibleVariation = await jsonRequest(url, '/api/items/variations', {
+    token,
+    body: { itemId: epiItem.data.id, values: { Tamanho: 'G', CA: '9999' }, stock: 4 },
+  })
+  assert.equal(incompatibleVariation.response.status, 200)
   const epiRule = await jsonRequest(url, '/api/epis/role-rules', {
     token,
     body: {
       roleName: 'Operador Atualizado',
-      targetType: 'item',
-      targetKey: epiItem.data.id,
+      targetType: 'variacao',
+      targetKey: epiVariation.data.id,
       targetLabel: 'Mascara de teste',
-      days: 30,
+      days: 0,
       quantity: 4,
+      usageReason: '  Motivo do PGR para este cargo  ',
     },
   })
   assert.equal(epiRule.response.status, 200)
   assert.equal(epiRule.data.quantity, 4)
+  assert.equal(epiRule.data.days, 0)
+  assert.equal(epiRule.data.usageReason, 'Motivo do PGR para este cargo')
+  const convert = allowedCas => jsonRequest(url, '/api/epis/role-rules/use-item', {
+    token, method: 'PUT', body: {
+      changes: [{ id: epiRule.data.id, previousVariationId: epiVariation.data.id }],
+      allowedCas,
+    },
+  })
+  assert.equal((await convert([])).response.status, 409)
+  assert.equal((await convert(['5555'])).response.status, 409)
+  const converted = await convert(['1234'])
+  assert.equal(converted.response.status, 200)
+  assert.equal(converted.data[0].targetType, 'item')
+  assert.deepEqual(converted.data[0].allowedCas, ['1234'])
+  assert.equal(converted.data[0].quantity, 4)
+  assert.equal((await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { allowedCas: [] },
+  })).response.status, 400)
+  const updateItemCas = (previousAllowedCas, allowedCas) => jsonRequest(url, '/api/epis/role-rules/use-item', {
+    token, method: 'PUT', body: {
+      changes: [{ id: epiRule.data.id, previousItemId: epiItem.data.id, previousAllowedCas }],
+      allowedCas,
+    },
+  })
+  assert.equal((await updateItemCas(['1234'], ['5555'])).response.status, 409)
+  assert.equal((await updateItemCas(null, ['9999'])).response.status, 409)
+  const changedCas = await updateItemCas(['1234'], ['9999'])
+  assert.equal(changedCas.response.status, 200)
+  assert.deepEqual(changedCas.data[0].allowedCas, ['9999'])
+  assert.equal(changedCas.data[0].quantity, 4)
+  assert.equal((await updateItemCas(['9999'], ['1234'])).response.status, 200)
+  const changedReason = await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { usageReason: 'Motivo atualizado' },
+  })
+  assert.equal(changedReason.response.status, 200)
+  assert.equal(changedReason.data.days, 0)
+  assert.equal(changedReason.data.quantity, 4)
+  assert.equal(changedReason.data.usageReason, 'Motivo atualizado')
+  const invalidReason = await jsonRequest(url, `/api/epis/role-rules/${epiRule.data.id}`, {
+    token, method: 'PUT', body: { usageReason: { invalid: true } },
+  })
+  assert.equal(invalidReason.response.status, 400)
   const epiRules = await jsonRequest(url, '/api/epis/role-rules')
   assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).quantity, 4)
+  assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).days, 0)
+  assert.equal(epiRules.data.find(row => row.id === epiRule.data.id).usageReason, 'Motivo atualizado')
 
   const epiLine = {
     itemId: epiItem.data.id,
@@ -448,16 +771,45 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     destination: 'EPI',
     destinationId: epiDestination.data.id,
   }
+  const incompatibleLine = { ...epiLine, variationId: incompatibleVariation.data.id, qty: 1 }
+  const wrongCa = await jsonRequest(url, '/api/movements/batch', {
+    token: operatorToken,
+    body: {
+      type: 'saida', items: [incompatibleLine], fields: epiFields,
+      stockCounts: { [incompatibleVariation.data.id]: 4 },
+    },
+  })
+  assert.equal(wrongCa.response.status, 400)
+  assert.match(wrongCa.data.error, /CA 9999/)
+  const wrongSingle = await jsonRequest(url, '/api/movements', {
+    token: operatorToken,
+    body: {
+      ...incompatibleLine, ...epiFields, type: 'saida',
+      stockCounts: { [incompatibleVariation.data.id]: 4 },
+    },
+  })
+  assert.equal(wrongSingle.response.status, 400)
+  assert.match(wrongSingle.data.error, /CAs aceitos: 1234/)
+  const countRequired = await jsonRequest(url, '/api/movements/batch', {
+    token: operatorToken,
+    body: { type: 'saida', items: [{ ...epiLine, qty: 4 }], fields: epiFields },
+  })
+  assert.equal(countRequired.response.status, 409)
+  assert.equal(countRequired.data.code, 'STOCK_CONFIRMATION_REQUIRED')
+  assert.equal(countRequired.data.confirmations[0].minimum, 4)
+  assert.equal(countRequired.data.confirmations[0].previousStock, 6)
   const insufficientEpiBatch = await jsonRequest(url, '/api/movements/batch', {
     token: operatorToken,
-    body: { type: 'saida', items: [{ ...epiLine, qty: 4 }, { ...epiLine, qty: 3 }], fields: epiFields },
+    body: { type: 'saida', items: [{ ...epiLine, qty: 4 }, { ...epiLine, qty: 3 }], fields: epiFields, stockCounts: { [epiVariation.data.id]: 6 } },
   })
   assert.equal(insufficientEpiBatch.response.status, 400)
   const epiStockAfterFailure = await jsonRequest(url, '/api/items/variations')
   assert.equal(epiStockAfterFailure.data.find(row => row.id === epiVariation.data.id).stock, 6)
+  assert.equal(epiStockAfterFailure.data.find(row => row.id === epiVariation.data.id).stockConfirmed, false)
 
   const epiBatchBody = {
     requestId: 'epi_sheet_test_001',
+    stockCounts: { [epiVariation.data.id]: 6 },
     type: 'saida',
     items: [{ ...epiLine, qty: 4 }],
     fields: epiFields,
@@ -469,6 +821,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.deepEqual(repeatedEpiBatch.data, epiBatch.data)
   const epiStockAfterRepeat = await jsonRequest(url, '/api/items/variations')
   assert.equal(epiStockAfterRepeat.data.find(row => row.id === epiVariation.data.id).stock, 2)
+  assert.equal(epiStockAfterRepeat.data.find(row => row.id === epiVariation.data.id).stockConfirmed, true)
 
   const directPhotoBytes = Buffer.from([0xff, 0xd8, 0x02, 0xff, 0xd9])
   const visitorCannotUploadVariationPhoto = await fetch(`${url}/api/photo-batches/variation/${variation.data.id}/image`, {
@@ -555,6 +908,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     token: operatorToken,
     body: {
       type: 'entrada',
+      stockCounts: { [variation.data.id]: 5 },
       itemId: item.data.id,
       variationId: variation.data.id,
       itemName: item.data.name,
@@ -562,7 +916,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     },
   })
   assert.equal(movement.response.status, 200)
-  assert.equal(movement.data.stockAfter, 5)
+  assert.equal(movement.data.stockAfter, 8)
 
   const staleVariationEdit = await jsonRequest(url, `/api/items/variations/${variation.data.id}`, {
     method: 'PUT',
@@ -570,9 +924,9 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
     body: { ...changedInitialStock.data, stock: 0 },
   })
   assert.equal(staleVariationEdit.response.status, 200)
-  assert.equal(staleVariationEdit.data.stock, 5)
+  assert.equal(staleVariationEdit.data.stock, 8)
   const variationsAfterStaleEdit = await jsonRequest(url, '/api/items/variations')
-  assert.equal(variationsAfterStaleEdit.data.find(row => row.id === variation.data.id).stock, 5)
+  assert.equal(variationsAfterStaleEdit.data.find(row => row.id === variation.data.id).stock, 8)
 
   const batchBody = {
     requestId: 'photo_batch_test_001',
@@ -589,12 +943,12 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   }
   const firstBatch = await jsonRequest(url, '/api/movements/batch', { token: operatorToken, body: batchBody })
   assert.equal(firstBatch.response.status, 200)
-  assert.equal(firstBatch.data.movements[0].stockAfter, 7)
+  assert.equal(firstBatch.data.movements[0].stockAfter, 10)
   const repeatedBatch = await jsonRequest(url, '/api/movements/batch', { token: operatorToken, body: batchBody })
   assert.equal(repeatedBatch.response.status, 200)
   assert.deepEqual(repeatedBatch.data, firstBatch.data)
   const variationsAfterRepeatedBatch = await jsonRequest(url, '/api/items/variations')
-  assert.equal(variationsAfterRepeatedBatch.data.find(row => row.id === variation.data.id).stock, 7)
+  assert.equal(variationsAfterRepeatedBatch.data.find(row => row.id === variation.data.id).stock, 10)
 
   const newCatalogLine = {
     newCatalog: {
@@ -620,6 +974,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
 
   const catalogBatchBody = {
     requestId: 'photo_catalog_admin_001',
+    stockCounts: { 'new:0': 4 },
     type: 'entrada',
     fields: { docRef: 'NF FOTO 1', note: 'Cadastro na implantação' },
     items: [newCatalogLine],
@@ -629,7 +984,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(catalogBatch.data.initialMovements.length, 1)
   assert.equal(catalogBatch.data.initialMovements[0].stockBefore, 0)
   assert.equal(catalogBatch.data.initialMovements[0].stockAfter, 4)
-  assert.equal(catalogBatch.data.initialMovements[0].docRef, 'AJUSTE')
+  assert.equal(catalogBatch.data.initialMovements[0].docRef, 'CONFERÊNCIA INICIAL')
   assert.equal(catalogBatch.data.movements[0].stockBefore, 4)
   assert.equal(catalogBatch.data.movements[0].stockAfter, 6)
 
@@ -658,7 +1013,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(operatorCannotDeleteMovement.response.status, 403)
 
   const variations = await jsonRequest(url, '/api/items/variations')
-  assert.equal(variations.data.find(row => row.id === variation.data.id).stock, 7)
+  assert.equal(variations.data.find(row => row.id === variation.data.id).stock, 10)
 
   const deletedMovement = await jsonRequest(url, `/api/movements/${movement.data.id}`, {
     method: 'DELETE',
@@ -671,7 +1026,7 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(inspectionAfterDelete.prepare('SELECT id FROM movements WHERE id = ?').get(movement.data.id), undefined)
   assert.equal(inspectionAfterDelete.prepare('SELECT COUNT(*) AS count FROM movement_batch_requests WHERE request_id = ?').get(batchBody.requestId).count, 1)
   assert.equal(inspectionAfterDelete.prepare('SELECT source_photo_id FROM variation_photos WHERE variation_id = ?').pluck().get('var_photo_api'), latestPhotoId)
-  assert.equal(inspectionAfterDelete.pragma('user_version', { simple: true }), 4)
+  assert.equal(inspectionAfterDelete.pragma('user_version', { simple: true }), 9)
   inspectionAfterDelete.close()
 
   const deletedVariation = await jsonRequest(url, `/api/items/variations/${variation.data.id}`, {
@@ -699,6 +1054,92 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(workOrder.response.status, 200)
   assert.equal(workOrder.data.destinationName, 'Jigger 3')
 
+  const invalidStock = await jsonRequest(url, '/api/items/variations', {
+    token, body: { itemId: item.data.id, values: { medida: '20mm' }, stock: 'invalido' },
+  })
+  assert.equal(invalidStock.response.status, 400)
+  const materialVariation = await jsonRequest(url, '/api/items/variations', {
+    token, body: { itemId: item.data.id, values: { medida: '20mm' }, stock: 10 },
+  })
+  assert.equal(materialVariation.response.status, 200)
+  const countedVariation = await jsonRequest(url, '/api/items/variations', {
+    token, body: { itemId: item.data.id, values: { medida: 'Conferência' }, stock: 0 },
+  })
+  const countedLine = { type: 'saida', itemId: item.data.id, variationId: countedVariation.data.id, qty: 2, ...epiFields }
+  const firstCountRequest = await jsonRequest(url, '/api/movements', { token: operatorToken, body: countedLine })
+  assert.equal(firstCountRequest.data.code, 'STOCK_CONFIRMATION_REQUIRED')
+  for (const value of [null, '', true, -1]) {
+    const invalidCount = await jsonRequest(url, '/api/movements', {
+      token: operatorToken, body: { ...countedLine, stockCounts: { [countedVariation.data.id]: value } },
+    })
+    assert.equal(invalidCount.data.code, 'STOCK_COUNT_INVALID')
+  }
+  const countedExit = await jsonRequest(url, '/api/movements', {
+    token: operatorToken, body: { ...countedLine, stockCounts: { [countedVariation.data.id]: 5 } },
+  })
+  assert.equal(countedExit.response.status, 200)
+  assert.equal(countedExit.data.stockBefore, 5)
+  assert.equal(countedExit.data.stockAfter, 3)
+  assert.equal(countedExit.data.adjustments.length, 1)
+  assert.equal(countedExit.data.adjustments[0].qty, 5)
+  const adjustmentId = countedExit.data.adjustments[0].id
+  for (const method of ['PUT', 'DELETE']) {
+    const protectedAdjustment = await jsonRequest(url, `/api/movements/${adjustmentId}`, { token, method, ...(method === 'PUT' ? { body: { qty: 1 } } : {}) })
+    assert.equal(protectedAdjustment.response.status, 409)
+  }
+  const secondCountedExit = await jsonRequest(url, '/api/movements', { token: operatorToken, body: countedLine })
+  assert.equal(secondCountedExit.response.status, 200)
+  assert.equal(secondCountedExit.data.stockAfter, 1)
+  assert.deepEqual(secondCountedExit.data.adjustments, [])
+  const staleCount = await jsonRequest(url, '/api/movements', { token: operatorToken, body: { ...countedLine, stockCounts: { [countedVariation.data.id]: 5 } } })
+  assert.equal(staleCount.data.code, 'STOCK_COUNT_STALE')
+  const duplicateVariation = await jsonRequest(url, '/api/items/variations', {
+    token, body: { itemId: item.data.id, values: { medida: '20mm' }, stock: 0 },
+  })
+  assert.equal(duplicateVariation.response.status, 409)
+  const materialPath = `/api/work-orders/${workOrder.data.id}/items`
+  const osCountRequired = await jsonRequest(url, materialPath, {
+    token, body: { variationId: materialVariation.data.id, qty: 2 },
+  })
+  assert.equal(osCountRequired.data.code, 'STOCK_CONFIRMATION_REQUIRED')
+  const invalidQuantity = await jsonRequest(url, materialPath, {
+    token, body: { variationId: materialVariation.data.id, qty: 'abc' },
+  })
+  assert.equal(invalidQuantity.response.status, 400)
+  const addedMaterial = await jsonRequest(url, materialPath, {
+    token, body: { variationId: materialVariation.data.id, qty: '2', stockCounts: { [materialVariation.data.id]: 10 } },
+  })
+  assert.equal(addedMaterial.response.status, 200)
+  assert.equal(addedMaterial.data.newStock, 8)
+  const implicitId = addedMaterial.data.workOrderItem.movementId
+  const changedMaterial = await jsonRequest(url, `/api/movements/${implicitId}`, {
+    token, method: 'PUT', body: { qty: 3 },
+  })
+  assert.equal(changedMaterial.response.status, 200)
+  const duplicateLink = await jsonRequest(url, `${materialPath}/link`, {
+    token, body: { movementId: implicitId },
+  })
+  assert.equal(duplicateLink.response.status, 409)
+  const removedMaterial = await jsonRequest(url, `${materialPath}/${addedMaterial.data.workOrderItem.id}`, {
+    token, method: 'DELETE',
+  })
+  assert.equal(removedMaterial.data.newStock, 10)
+  assert.equal(removedMaterial.data.removedMovementId, implicitId)
+  const ordinaryExit = await jsonRequest(url, '/api/movements', {
+    token, body: { type: 'saida', variationId: materialVariation.data.id, itemId: item.data.id, qty: 1, docRef: 'AJUSTE' },
+  })
+  assert.equal(ordinaryExit.response.status, 200)
+  const linkedMaterial = await jsonRequest(url, `${materialPath}/link`, {
+    token, body: { movementId: ordinaryExit.data.id },
+  })
+  assert.equal(linkedMaterial.response.status, 200)
+  const unlinkedMaterial = await jsonRequest(url, `${materialPath}/${linkedMaterial.data.id}`, { token, method: 'DELETE' })
+  assert.equal(unlinkedMaterial.data.newStock, 9)
+  assert.equal(unlinkedMaterial.data.removedMovementId, null)
+  assert.equal(unlinkedMaterial.data.implicit, false)
+  const rejectEntryLink = await jsonRequest(url, `${materialPath}/link`, { token, body: { movementId: importedEntry.id } })
+  assert.equal(rejectEntryLink.response.status, 400)
+
   const parentDestination = await jsonRequest(url, '/api/destinations', {
     token,
     body: { name: 'Jiggers' },
@@ -714,7 +1155,74 @@ test('API sobe, protege escrita e executa o fluxo critico de estoque', { timeout
   assert.equal(refreshedOrder.data.destinationName, 'Jigger 3')
   assert.equal(refreshedOrder.data.equipment, 'Jigger 3')
 
+  // Fill pending boot attributes in one transaction and preserve unrelated data.
+  const boots = await jsonRequest(url, '/api/items', { token, body: { name: 'Botas para edição em lote', group: 'EPI', attributes: ['Tamanho', 'Bico'] } })
+  const bootRows = []
+  for (const [size, toe] of [['39', ''], ['40', ''], ['41', 'Aço']]) {
+    const created = await jsonRequest(url, '/api/items/variations', { token, body: { itemId: boots.data.id, values: { Tamanho: size, Bico: toe }, stock: 5, extras: { teste: 'preservar' } } })
+    assert.equal(created.response.status, 200)
+    bootRows.push(created.data)
+  }
+  const bulkIds = bootRows.map(v => v.id)
+  const bulk = (change, ids = bulkIds, auth = token) => jsonRequest(url, '/api/items/variations/bulk', { token: auth, method: 'PUT', body: { ids, change } })
+  const deniedBulk = await bulk({ field: 'attribute', name: 'Bico', value: 'Composite' }, bulkIds, operatorToken)
+  assert.equal(deniedBulk.response.status, 403)
+  const fill = await bulk({ field: 'attribute', name: 'Bico', value: 'Composite', onlyEmpty: true })
+  assert.equal(fill.response.status, 200)
+  assert.equal(fill.data.updated, 2)
+  assert.equal((await bulk({ field: 'attribute', name: 'Bico', value: 'Composite', onlyEmpty: true })).data.updated, 0)
+  assert.equal((await bulk({ field: 'attribute', name: 'Modelo comum', value: 'Segurança' })).response.status, 200)
+  assert.equal((await bulk({ field: 'locations', mode: 'add', value: ['Prateleira A'] })).response.status, 200)
+  assert.equal((await bulk({ field: 'locations', mode: 'add', value: ['Prateleira A', 'Prateleira B'] })).response.status, 200)
+  assert.equal((await bulk({ field: 'destinations', mode: 'add', value: [childDestination.data.id] })).response.status, 200)
+  assert.equal((await bulk({ field: 'minStock', value: 0, onlyEmpty: true })).response.status, 200)
+  const beforeConflict = await jsonRequest(url, '/api/items/variations')
+  const collision = await bulk({ field: 'attribute', name: 'Tamanho', value: '40' })
+  assert.equal(collision.response.status, 409)
+  const afterConflict = await jsonRequest(url, '/api/items/variations')
+  assert.deepEqual(afterConflict.data, beforeConflict.data, 'Uma colisão não pode salvar parte do lote.')
+  const removedRow = await bulk({ field: 'locations', mode: 'replace', value: [] }, [bootRows[0].id, 'missing-variation'])
+  assert.equal(removedRow.response.status, 404)
+  assert.deepEqual((await jsonRequest(url, '/api/items/variations')).data, beforeConflict.data)
+  for (const v of afterConflict.data.filter(v => bulkIds.includes(v.id))) {
+    assert.equal(v.stock, 5)
+    assert.equal(v.stockConfirmed, false)
+    assert.deepEqual(v.extras, { teste: 'preservar' })
+    assert.deepEqual(v.locations, ['Prateleira A', 'Prateleira B'])
+    assert.deepEqual(v.destinations, [childDestination.data.id])
+    assert.equal(v.minStock, 0)
+    assert.equal(v.values.Bico, v.id === bootRows[2].id ? 'Aço' : 'Composite')
+  }
+  assert.equal((await bulk({ field: 'locations', mode: 'remove', value: ['Prateleira A'] })).response.status, 200)
+  assert.equal((await bulk({ field: 'destinations', mode: 'replace', value: [] })).response.status, 200)
+  const updatedBoots = (await jsonRequest(url, '/api/items')).data.find(i => i.id === boots.data.id)
+  assert.ok(updatedBoots.attributes.includes('Modelo comum'))
+  // An explicit adjustment is the initial confirmation, without a second prompt.
+  const adjustmentLine = { type: 'entrada', variationId: bootRows[0].id, itemId: boots.data.id, qty: 3, docRef: 'AJUSTE' }
+  const operatorAdjustment = await jsonRequest(url, '/api/movements', { token: operatorToken, body: adjustmentLine })
+  assert.equal(operatorAdjustment.data.code, 'STOCK_CONFIRMATION_REQUIRED')
+  const explicitAdjustment = await jsonRequest(url, '/api/movements', { token, body: adjustmentLine })
+  assert.equal(explicitAdjustment.response.status, 200)
+  assert.equal(explicitAdjustment.data.stockBefore, 5)
+  assert.equal(explicitAdjustment.data.stockAfter, 8)
+  assert.deepEqual(explicitAdjustment.data.adjustments, [])
+  const afterAdjustment = await jsonRequest(url, '/api/movements', { token: operatorToken, body: { ...adjustmentLine, docRef: '', qty: 1 } })
+  assert.equal(afterAdjustment.response.status, 200)
+  assert.equal(afterAdjustment.data.stockAfter, 9)
+  assert.deepEqual(afterAdjustment.data.adjustments, [])
+  const invalidAdjustment = await jsonRequest(url, '/api/movements', { token, body: { ...adjustmentLine, variationId: bootRows[1].id, type: 'saida', qty: 6 } })
+  assert.equal(invalidAdjustment.response.status, 400)
+  const needsCount = await jsonRequest(url, '/api/movements', { token: operatorToken, body: { ...adjustmentLine, variationId: bootRows[1].id, docRef: '' } })
+  assert.equal(needsCount.data.code, 'STOCK_CONFIRMATION_REQUIRED', 'Um ajuste inválido não confirma estoque.')
+  const explicitZeroAdjustment = await jsonRequest(url, '/api/movements', { token, body: { ...adjustmentLine, variationId: bootRows[1].id, type: 'saida', qty: 5 } })
+  assert.equal(explicitZeroAdjustment.response.status, 200)
+  assert.equal(explicitZeroAdjustment.data.stockAfter, 0)
+
   const inspectionDb = new Database(dbPath)
+  const confirmedAdjustment = inspectionDb.prepare('SELECT * FROM stock_confirmations WHERE variation_id=?').get(bootRows[0].id)
+  assert.equal(confirmedAdjustment.movement_id, explicitAdjustment.data.id)
+  assert.equal(confirmedAdjustment.previous_stock, 5)
+  assert.equal(confirmedAdjustment.counted_stock, 8)
   inspectionDb.prepare("UPDATE sessions SET expires_at = datetime('now', '-1 minute') WHERE token = ?").run(visitorToken)
   inspectionDb.close()
   const expiredSession = await jsonRequest(url, '/api/auth/me', { token: visitorToken })

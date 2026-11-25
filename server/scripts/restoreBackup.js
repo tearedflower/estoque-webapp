@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, rename, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, rename, rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getBackupSettings } from '../backup.js'
 import { argValue, loadEnvFile, resolveEnvPath } from '../env.js'
+import { copyVerifiedPhotos, photoUploadDir, verifyPhotos } from '../utils/backupPhotos.js'
 
 export const RESTORE_CONFIRMATION = 'RESTAURAR_BACKUP'
 
@@ -28,13 +29,22 @@ function assertHealthyDatabase(path) {
   }
 }
 
-export async function restoreBackup({ source, target, backupDir }) {
+export async function restoreBackup({ source, target, backupDir, photoDir = photoUploadDir() }) {
   const sourcePath = resolve(source)
   const targetPath = resolve(target)
   if (!existsSync(sourcePath)) throw new Error(`Backup nao encontrado: ${sourcePath}`)
   if (sourcePath === targetPath) throw new Error('O backup e o banco atual nao podem ser o mesmo arquivo.')
 
   assertHealthyDatabase(sourcePath)
+  const photosSource = sourcePath + '.photos'
+  const photosTarget = resolve(photoDir)
+  const photosTemp = photosTarget + '.restore.tmp'
+  const photosOld = photosTarget + '.restore.old'
+  let photosRestored = null
+  if (existsSync(photosSource)) {
+    if (existsSync(photosTemp) || existsSync(photosOld)) throw new Error('Existe uma restauração de fotos pendente. Preserve e confira as pastas .restore antes de continuar.')
+    photosRestored = (await verifyPhotos(photosSource)).length
+  }
   await mkdir(dirname(targetPath), { recursive: true })
   await mkdir(backupDir, { recursive: true })
 
@@ -48,6 +58,7 @@ export async function restoreBackup({ source, target, backupDir }) {
       current.pragma('wal_checkpoint(TRUNCATE)')
       safetyBackup = join(backupDir, `antes-restauracao-${timestamp()}.db`)
       await current.backup(safetyBackup)
+      if (existsSync(photosTarget)) await cp(photosTarget, safetyBackup + '.photos-original', { recursive: true })
     } finally {
       current.close()
     }
@@ -61,22 +72,34 @@ export async function restoreBackup({ source, target, backupDir }) {
   assertHealthyDatabase(tempPath)
 
   let movedCurrent = false
+  let movedPhotos = false
+  let installedPhotos = false
   try {
+    if (photosRestored !== null) await copyVerifiedPhotos(photosSource, photosTemp)
     await rm(`${targetPath}-wal`, { force: true })
     await rm(`${targetPath}-shm`, { force: true })
     if (existsSync(targetPath)) {
       await rename(targetPath, oldPath)
       movedCurrent = true
     }
+    if (photosRestored !== null) {
+      if (existsSync(photosTarget)) { await rename(photosTarget, photosOld); movedPhotos = true }
+      await rename(photosTemp, photosTarget)
+      installedPhotos = true
+    }
     await rename(tempPath, targetPath)
-    await rm(oldPath, { force: true })
   } catch (error) {
     await rm(tempPath, { force: true })
     if (movedCurrent && !existsSync(targetPath)) await rename(oldPath, targetPath)
+    if (installedPhotos) await rm(photosTarget, { recursive: true, force: true })
+    if (movedPhotos) await rename(photosOld, photosTarget)
+    await rm(photosTemp, { recursive: true, force: true })
     throw error
   }
+  await rm(oldPath, { force: true })
+  if (movedPhotos) await rm(photosOld, { recursive: true, force: true })
 
-  return { sourcePath, targetPath, safetyBackup }
+  return { sourcePath, targetPath, safetyBackup, photosRestored }
 }
 
 async function main() {
@@ -88,12 +111,14 @@ async function main() {
   const target = resolveEnvPath(process.env.DB_PATH, './server/estoque.db')
   const backupDir = resolveEnvPath(process.env.BACKUP_DIR, getBackupSettings().dir)
   const result = await restoreBackup({ source, target, backupDir })
+  if (result.photosRestored === null) console.warn('Backup legado sem pasta .photos: somente o banco foi restaurado; as fotos atuais foram mantidas.')
   console.log(JSON.stringify({
     ok: true,
     envFile,
     backup: basename(result.sourcePath),
     dbPath: result.targetPath,
     safetyBackup: result.safetyBackup,
+    photosRestored: result.photosRestored,
   }, null, 2))
 }
 

@@ -1,15 +1,18 @@
 <script setup>
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
-import AppSidebar from './components/ui/AppSidebar.vue'
-import HistorySidebar from './components/ui/HistorySidebar.vue'
 import RailFooter from './components/ui/RailFooter.vue'
+import AppNavigation from './components/ui/AppNavigation.vue'
 import ToastContainer from './components/ui/ToastContainer.vue'
+import StockConfirmationDialog from './components/movements/StockConfirmationDialog.vue'
+import { stockConfirmationRevision } from './composables/useStockConfirmation.js'
 import LoginModal from './components/ui/LoginModal.vue'
 import AppButton from './components/ui/AppButton.vue'
+import AppLink from './components/ui/AppLink.vue'
+import { routeHref, parseRoute, routeIdentity } from './utils/navigation.js'
 import AppDialog from './components/ui/AppDialog.vue'
 import AppModal from './components/ui/AppModal.vue'
 import DashboardView from './views/DashboardView.vue'
-import { useTheme } from './composables/useTheme.js'
+import { canUseLocalVisualStyles, useTheme } from './composables/useTheme.js'
 import { useItems } from './composables/useItems.js'
 import { useMovements } from './composables/useMovements.js'
 import { useLocations } from './composables/useLocations.js'
@@ -20,14 +23,17 @@ import { useRoles } from './composables/useRoles.js'
 import { useEpis } from './composables/useEpis.js'
 import { useUsers } from './composables/useUsers.js'
 import { useAuth } from './composables/useAuth.js'
+import { useAppUpdate } from './composables/useAppUpdate.js'
 import { useWorkOrders } from './composables/useWorkOrders.js'
 import { useMotors } from './composables/useMotors.js'
 import { useClosings } from './composables/useClosings.js'
 import { useToast } from './composables/useToast.js'
 import { buildGlobalSearchResults } from './utils/globalSearch.js'
 import { failedSourceNames } from './utils/sync.js'
+import { createResourceLoader } from './services/resourceLoader.js'
 
 const CatalogView = defineAsyncComponent(() => import('./views/CatalogView.vue'))
+const ReportsView = defineAsyncComponent(() => import('./views/ReportsView.vue'))
 const CadastrosView = defineAsyncComponent(() => import('./views/CadastrosView.vue'))
 const InventarioView = defineAsyncComponent(() => import('./views/InventarioView.vue'))
 const MovimentacoesView = defineAsyncComponent(() => import('./views/MovimentacoesView.vue'))
@@ -35,22 +41,37 @@ const OrdensServicoView = defineAsyncComponent(() => import('./views/OrdensServi
 const MotoresView = defineAsyncComponent(() => import('./views/MotoresView.vue'))
 const EpisTab = defineAsyncComponent(() => import('./components/cadastros/EpisTab.vue'))
 
-const { isDark, toggleTheme } = useTheme()
-const { items, variations, uniqueGroups, activeGroup, setActiveGroup, facets, hasActiveFilters, toggleFilter, clearFilters, loadData: loadItems } = useItems()
+const { isDark, toggleTheme, visualStyleName, cycleStyle } = useTheme()
+const canChangeVisualStyle = canUseLocalVisualStyles()
+const { items, variations, activeGroup, activeCategory, activeSubcategory, loadData: loadItems } = useItems()
 const { loadData: loadMovements } = useMovements()
 const { loadData: loadLocations } = useLocations()
 const { destinations, getDestFullName, loadData: loadDestinations } = useDestinations()
-const { activePeople, loadData: loadPeople } = usePeople()
+const { activePeople, loadData: loadPeople, clearData: clearPeople } = usePeople()
 const { loadData: loadSuppliers } = useSuppliers()
 const { loadData: loadRoles } = useRoles()
 const { loadData: loadEpis } = useEpis()
-const { loadData: loadUsers } = useUsers()
-const { isAdmin, isLoggedIn, canOperate, user, logout, checkSession, changeOwnPassword } = useAuth()
+const { loadData: loadUsers, clearData: clearUsers } = useUsers()
+const { isAdmin, isLoggedIn, canOperate, user, logout, checkSession, changeOwnPassword, expireSession } = useAuth()
 const { workOrders, loadData: loadWorkOrders } = useWorkOrders()
 const { motors, loadData: loadMotors } = useMotors()
 const { loadData: loadClosings } = useClosings()
 const { success, error } = useToast()
-const localBrandFavicon = '/local-brand/favicon.png'
+const { updateAvailable, dismissUpdate, reloadApp } = useAppUpdate()
+watch(stockConfirmationRevision, async () => {
+  try { await Promise.all([loadItems(), loadMovements()]) }
+  catch { error('Movimentação salva. Atualize a página para recarregar os saldos e o histórico.') }
+})
+const localBrandHeaderLogo = ref('/local-brand/header-logo-96.png')
+const localBrandFavicon = '/local-brand/favicon-32.png'
+
+function onHeaderLogoError(event) {
+  if (localBrandHeaderLogo.value !== localBrandFavicon) {
+    localBrandHeaderLogo.value = localBrandFavicon
+  } else {
+    event.currentTarget.style.display = 'none'
+  }
+}
 const localBrandName = ref('Estoque')
 const environmentBadge = ref(null)
 const backupHealth = ref(null)
@@ -63,7 +84,7 @@ const UI_STATE_KEY = 'estoque_ui_state_v1'
 
 function loadUiState() {
   try {
-    return JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+    return JSON.parse(sessionStorage.getItem(UI_STATE_KEY) || '{}')
   } catch {
     return {}
   }
@@ -71,7 +92,7 @@ function loadUiState() {
 
 function saveUiState(patch) {
   const current = loadUiState()
-  localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...current, ...patch }))
+  sessionStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...current, ...patch }))
 }
 
 function loadStoredList(key) {
@@ -85,29 +106,29 @@ function loadStoredList(key) {
 }
 
 const savedUiState = loadUiState()
-const savedActiveTab = ['dashboard', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin'].includes(savedUiState.activeTab)
+const savedActiveTab = ['dashboard', 'relatorios', 'catalogo', 'inventario', 'movimentacoes', 'ordens', 'motores', 'cadastros', 'epis-admin'].includes(savedUiState.activeTab)
   ? savedUiState.activeTab
   : 'dashboard'
 const showLoginModal = ref(false)
-const mobileSidebarOpen = ref(false)
-const mobileSidebarTrigger = ref(null)
-const railOpen = ref(false)
-const expandedNavigationGroup = ref('')
-const catalogSidebarDismissed = ref(true)
 const catalogSearch = ref(savedUiState.catalogSearch || '')
 const catalogRef = ref(null)
 const activeTab = ref(savedActiveTab)
 const requestedInventorySection = ref(savedUiState.inventorySection || 'estoque')
+const requestedReportsTab = ref('movimentacoes')
 const requestedInventoryStatus = ref(savedUiState.inventoryStatus || 'all')
 const requestedInventorySearch = ref(savedUiState.inventorySearch || '')
 const requestedOrdersTab = ref(savedUiState.ordersTab || 'ordens')
 const requestedOrderFocusId = ref('')
 const workOrderPreview = ref(null)
-const movBrowsing = ref(true)
 const movSubTab = ref(savedUiState.movSubTab || 'entrada')
 const requestedMovSubTab = ref(savedUiState.movSubTab || 'entrada')
-const requestedMovSearch = ref('')
+const requestedMovSearch = ref(null)
 const requestedMovementPrefill = ref(null)
+const requestedItemId = ref('')
+const requestedVariationId = ref('')
+const requestedHighlightVariationId = ref('')
+let routeReady = false
+let applyingRoute = false
 const movRef = ref(null)
 const requestedCadastrosTab = ref(savedUiState.cadastrosTab || 'hierarquia')
 const globalCreateOpen = ref(false)
@@ -118,7 +139,6 @@ const GLOBAL_SEARCH_RECENTS_KEY = 'estoque_global_search_recents_v1'
 const globalSearchRecentIds = ref(loadStoredList(GLOBAL_SEARCH_RECENTS_KEY))
 const syncFailures = ref([])
 const syncing = ref(false)
-const globalCreateRootRef = ref(null)
 const shortcutHelpOpen = ref(false)
 const shortcutPrefix = ref('')
 const passwordModalOpen = ref(false)
@@ -132,20 +152,8 @@ watch(mustChangePassword, required => {
   if (required) passwordModalOpen.value = true
 }, { immediate: true })
 
-const catalogSidebarAvailable = computed(() =>
-  activeTab.value === 'catalogo' || (activeTab.value === 'movimentacoes' && movBrowsing.value)
-)
-const showCatalogSidebar = computed(() => catalogSidebarAvailable.value && !catalogSidebarDismissed.value)
-const showHistorySidebar = computed(() =>
-  activeTab.value === 'movimentacoes' && movSubTab.value === 'historico'
-)
-const anySidebar = computed(() => showCatalogSidebar.value || showHistorySidebar.value)
-const catalogSidebarDocked = computed(() => showCatalogSidebar.value)
-const historySidebarDocked = computed(() => showHistorySidebar.value && mobileSidebarOpen.value)
-const sidebarDocked = computed(() => catalogSidebarDocked.value || historySidebarDocked.value)
-const sidebarOverlayOpen = computed(() => anySidebar.value && mobileSidebarOpen.value && !sidebarDocked.value)
 const navigationGroups = [
-  { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }] },
+  { id: 'inicio', label: 'Início', defaultTab: 'dashboard', icon: 'M2.25 12l8.954-8.955a1.125 1.125 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75', tabs: [{ id: 'dashboard', label: 'Início' }, { id: 'relatorios', label: 'Relatórios' }] },
   {
     id: 'materiais',
     label: 'Materiais',
@@ -153,7 +161,7 @@ const navigationGroups = [
     icon: 'M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9',
     tabs: [
       { id: 'catalogo', label: 'Consultar materiais' },
-      { id: 'inventario', label: 'Controle de estoque' },
+      { id: 'inventario', label: 'Controle de estoque', target: { tab: 'inventario', section: 'estoque' } },
     ],
   },
   {
@@ -165,10 +173,18 @@ const navigationGroups = [
     icon: 'M9 12.75 11.25 15 15 9.75m5.25-3.735A11.96 11.96 0 0 1 12 3c-2.755 0-5.3.93-7.33 2.494-.54.416-.83 1.075-.745 1.752.516 4.135 2.56 7.75 5.535 10.303L12 19.5l2.54-1.951c2.976-2.554 5.02-6.168 5.535-10.303a1.823 1.823 0 0 0-.745-1.752Z',
     tabs: [
       { id: 'epi-control', label: 'Controle de EPIs', target: { tab: 'inventario', section: 'epis', requiresAuth: true } },
-      { id: 'epis-admin', label: 'Editar EPIs', target: { tab: 'epis-admin', requiresAdmin: true }, requiresAdmin: true },
+      { id: 'epis-admin', label: 'Gestão de EPIs', target: { tab: 'epis-admin', requiresAdmin: true }, requiresAdmin: true },
     ],
   },
-  { id: 'movimentacoes', label: 'Entradas e saídas', defaultTab: 'movimentacoes', icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5', tabs: [{ id: 'movimentacoes', label: 'Entradas e saídas' }] },
+  {
+    id: 'movimentacoes', label: 'Entradas e saídas', defaultTab: 'movimentacoes',
+    icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+    tabs: [
+      { id: 'movimentacoes', label: 'Registrar', target: { tab: 'movimentacoes', subTab: 'entrada', requiresOperator: true }, requiresOperator: true },
+      { id: 'mov-historico', label: 'Histórico', target: { tab: 'movimentacoes', subTab: 'historico' } },
+      { id: 'mov-relatorios', label: 'Relatórios', target: { tab: 'movimentacoes', subTab: 'resumo' } },
+    ],
+  },
   {
     id: 'manutencao',
     label: 'Manutenção',
@@ -184,14 +200,6 @@ const navigationGroups = [
 const activeNavigationGroup = computed(() => {
   if (activeTab.value === 'inventario' && requestedInventorySection.value === 'epis') return 'epis'
   return navigationGroups.find(group => group.tabs.some(tab => tab.id === activeTab.value))?.id || 'inicio'
-})
-const activeTabLabel = computed(() => {
-  if (activeNavigationGroup.value === 'epis') return activeTab.value === 'epis-admin' ? 'Editar EPIs' : 'Controle de EPIs'
-  for (const group of navigationGroups) {
-    const tab = group.tabs.find(t => t.id === activeTab.value)
-    if (tab) return group.tabs.length > 1 ? `${group.label} · ${tab.label}` : tab.label
-  }
-  return ''
 })
 
 const navigationShortcuts = [
@@ -220,7 +228,11 @@ function canAccessTarget(target = {}) {
 const visibleNavigationGroups = computed(() =>
   navigationGroups
     .filter(canAccessTarget)
-    .map(group => ({ ...group, tabs: group.tabs.filter(canAccessTarget) }))
+    .map(group => ({
+      ...group,
+      active: activeNavigationGroup.value === group.id,
+      tabs: group.tabs.filter(canAccessTarget).map(tab => ({ ...tab, active: isNavigationTabActive(group, tab) })),
+    }))
 )
 
 const visibleNavigationShortcuts = computed(() =>
@@ -266,31 +278,59 @@ const globalSearchResults = computed(() => {
 })
 
 watch(globalSearchQuery, () => { globalSearchActiveIndex.value = 0 })
-// Load all data from API
-async function loadAllData() {
-  const sources = [
-    ['materiais', loadItems],
-    ['movimentações', loadMovements],
-    ['locais', loadLocations],
-    ['destinos', loadDestinations],
-    ['pessoas', loadPeople],
-    ['fornecedores', loadSuppliers],
-    ['cargos', loadRoles],
-    ['EPIs', loadEpis],
-    ['ordens de serviço', loadWorkOrders],
-    ['motores', loadMotors],
-    ['fechamentos', loadClosings],
-  ]
+const dataSources = [
+  ['materiais', loadItems], ['movimentações', loadMovements], ['locais', loadLocations],
+  ['destinos', loadDestinations],
+  ['pessoas', async () => {
+    if (!canOperate.value || user.value?.mustChangePassword) { clearPeople(); return }
+    const account = user.value.id
+    try { await loadPeople() } finally { if (user.value?.id !== account) clearPeople() }
+  }],
+  ['fornecedores', loadSuppliers], ['cargos', loadRoles], ['EPIs', loadEpis],
+  ['ordens de serviço', loadWorkOrders], ['motores', loadMotors], ['fechamentos', loadClosings],
+  ['usuários', async () => {
+    if (!isAdmin.value || user.value?.mustChangePassword) { clearUsers(); return }
+    const account = user.value.id
+    try { await loadUsers() } finally { if (user.value?.id !== account) clearUsers() }
+  }],
+]
+const resources = createResourceLoader(Object.fromEntries(dataSources))
+const tabResources = {
+  dashboard: ['materiais', 'movimentações', 'ordens de serviço', 'motores', 'fechamentos'],
+  catalogo: ['materiais', 'destinos'],
+  inventario: ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs', 'ordens de serviço', 'fechamentos'],
+  movimentacoes: ['materiais', 'movimentações', 'destinos', 'pessoas', 'fornecedores', 'ordens de serviço'],
+  ordens: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
+  motores: ['materiais', 'destinos', 'pessoas', 'ordens de serviço', 'motores'],
+  cadastros: ['materiais', 'locais', 'destinos', 'pessoas', 'fornecedores', 'cargos', 'EPIs', 'usuários'],
+  'epis-admin': ['materiais', 'destinos', 'pessoas', 'cargos', 'EPIs'],
+  relatorios: ['materiais', 'movimentações', 'destinos', 'pessoas', 'ordens de serviço', 'motores', 'fechamentos'],
+}
+let activeLoads = 0
+async function loadSources(names, force = false) {
+  activeLoads++
   syncing.value = true
   try {
-    const results = await Promise.allSettled(sources.map(([, load]) => load()))
-    syncFailures.value = failedSourceNames(sources, results)
-    if (syncFailures.value.length) console.error('Erro ao carregar dados:', syncFailures.value)
-    try { await loadUsers() } catch {}
-  } finally {
-    syncing.value = false
-  }
+    const sources = dataSources.filter(([name]) => names.includes(name))
+    const results = await Promise.allSettled(sources.map(([name]) => resources.load(name, { force })))
+    const failed = failedSourceNames(sources, results)
+    syncFailures.value = [...new Set([...syncFailures.value.filter(name => !names.includes(name)), ...failed])]
+  } finally { syncing.value = --activeLoads > 0 }
 }
+function loadAllData() { return loadSources(dataSources.map(([name]) => name), true) }
+const catalogDetailResources = ['movimentações', 'ordens de serviço']
+const epiControlResources = ['materiais', 'movimentações', 'destinos', 'pessoas', 'cargos', 'EPIs']
+function loadTabData() {
+  if (activeTab.value === 'inventario') {
+    if (!requestedInventorySection.value) return
+    if (requestedInventorySection.value === 'epis') return loadSources(epiControlResources)
+  }
+  const names = tabResources[activeTab.value] || dataSources.map(([name]) => name)
+  const withCatalogDetail = activeTab.value === 'catalogo' && requestedVariationId.value
+  return loadSources(withCatalogDetail ? [...names, ...catalogDetailResources] : names)
+}
+function invalidateResources() { resources.invalidate() }
+function refreshVisibleData() { if (document.visibilityState === 'visible') loadTabData() }
 
 async function loadLocalBrand() {
   try {
@@ -324,77 +364,60 @@ onMounted(async () => {
   healthTimer = window.setInterval(loadHealthStatus, 15_000)
   await checkSession()
   if (['cadastros', 'epis-admin'].includes(activeTab.value) && !isAdmin.value) activeTab.value = 'catalogo'
-  await loadAllData()
   if (savedUiState.catalogGroup) activeGroup.value = savedUiState.catalogGroup
+  await applyLocationRoute()
+  routeReady = true
+  loadTabData()
+  window.history.replaceState(null, '', routeHref(currentRoute.value))
+  window.addEventListener('hashchange', applyLocationRoute)
   window.addEventListener('app:data-invalidated', loadAllData)
+  window.addEventListener('app:resources-invalidated', invalidateResources)
+  window.addEventListener('app:session-expired', expireSession)
+  window.addEventListener('focus', refreshVisibleData)
   window.addEventListener('keydown', handleGlobalShortcutKeydown)
-  window.addEventListener('mousedown', handleGlobalPointerDown, true)
 })
 
 onUnmounted(() => {
   if (healthTimer) window.clearInterval(healthTimer)
   window.removeEventListener('app:data-invalidated', loadAllData)
+  window.removeEventListener('app:resources-invalidated', invalidateResources)
+  window.removeEventListener('app:session-expired', expireSession)
+  window.removeEventListener('focus', refreshVisibleData)
   window.removeEventListener('keydown', handleGlobalShortcutKeydown)
-  window.removeEventListener('mousedown', handleGlobalPointerDown, true)
+  window.removeEventListener('hashchange', applyLocationRoute)
   clearShortcutPrefix()
 })
 
 // Reload data after login
 watch(user, (newUser, oldUser) => {
-  if (newUser && !oldUser) loadAllData()
+  resources.invalidate()
+  if (!newUser) { clearPeople(); clearUsers() }
+  if (routeReady && newUser && !oldUser) loadTabData()
   if (!isAdmin.value && ['cadastros', 'epis-admin'].includes(activeTab.value)) activeTab.value = 'catalogo'
 })
 
+const scrollPositions = {}
+watch(activeTab, (_, previous) => { scrollPositions[previous] = window.scrollY }, { flush: 'sync' })
+watch(activeTab, async value => {
+  await nextTick()
+  requestAnimationFrame(() => window.scrollTo(0, scrollPositions[value] || 0))
+}, { flush: 'post' })
+
 watch(activeTab, value => {
-  railOpen.value = false
-  if (value === 'catalogo' || value === 'movimentacoes') catalogSidebarDismissed.value = true
+  if (routeReady) loadTabData()
   saveUiState({ activeTab: value })
 })
-
-watch(movBrowsing, browsing => {
-  if (activeTab.value === 'movimentacoes' && browsing) catalogSidebarDismissed.value = true
+watch(requestedVariationId, id => {
+  if (routeReady && id && activeTab.value === 'catalogo') loadSources(catalogDetailResources)
 })
-
-// Fecha painéis antigos ao trocar de contexto; a abertura é sempre manual.
-watch([anySidebar, catalogSidebarDocked], ([available, docked]) => {
-  if (!available || docked) mobileSidebarOpen.value = false
-}, { immediate: true })
-
-function openMobileSidebar() {
-  mobileSidebarOpen.value = true
-  nextTick(() => document.querySelector('[data-mobile-sidebar-close]')?.focus())
-}
-
-function closeMobileSidebar(restoreFocus = true) {
-  mobileSidebarOpen.value = false
-  if (restoreFocus) {
-    nextTick(() => (mobileSidebarTrigger.value?.$el || mobileSidebarTrigger.value)?.focus?.())
-  }
-}
-
-function closeCatalogSidebar() {
-  if (catalogSidebarDocked.value) {
-    catalogSidebarDismissed.value = true
-    return
-  }
-  closeMobileSidebar()
-}
-
-function toggleSidebar() {
-  if (catalogSidebarAvailable.value) {
-    catalogSidebarDismissed.value = !catalogSidebarDismissed.value
-    return
-  }
-  mobileSidebarOpen.value ? closeMobileSidebar() : openMobileSidebar()
-}
-
-function selectSidebarGroup(group) {
-  setActiveGroup(group)
-}
 
 watch(catalogSearch, value => saveUiState({ catalogSearch: value }))
 watch(activeGroup, value => saveUiState({ catalogGroup: value || '' }))
-watch(requestedInventorySection, value => { if (value) saveUiState({ inventorySection: value }) })
+watch(requestedInventorySection, value => {
+  if (!value) return
+  if (routeReady && activeTab.value === 'inventario') loadTabData()
+  saveUiState({ inventorySection: value })
+})
 watch(requestedInventoryStatus, value => { if (value && value !== '__pending__') saveUiState({ inventoryStatus: value }) })
 watch(requestedInventorySearch, value => saveUiState({ inventorySearch: value || '' }))
 watch(movSubTab, value => { if (value) saveUiState({ movSubTab: value }) })
@@ -450,6 +473,7 @@ function openMovementTab(tab, prefill = null) {
 }
 
 function openGlobalSearch() {
+  loadSources(['materiais', 'destinos', 'pessoas', 'ordens de serviço', 'motores'])
   globalSearchOpen.value = true
   globalCreateOpen.value = false
   shortcutHelpOpen.value = false
@@ -509,27 +533,11 @@ function closeTopPopup() {
     closePasswordModal()
     return true
   }
-  if (mobileSidebarOpen.value) {
-    closeMobileSidebar()
-    return true
-  }
-  if (railOpen.value) {
-    railOpen.value = false
-    return true
-  }
   if (showLoginModal.value) {
     showLoginModal.value = false
     return true
   }
   return false
-}
-
-function handleGlobalPointerDown(event) {
-  const target = event.target
-  if (!(target instanceof Node)) return
-  if (globalCreateOpen.value && !globalCreateRootRef.value?.contains(target)) {
-    globalCreateOpen.value = false
-  }
 }
 
 function isEditableTarget(target) {
@@ -604,40 +612,15 @@ function handleMovementComplete(target) {
   navigateTab(target)
 }
 
-function selectMainTab(tabId) {
-  if (tabId === 'cadastros' && !isAdmin.value) {
-    if (!isLoggedIn.value) showLoginModal.value = true
-    else error('A administração é restrita a administradores.')
-    return
-  }
-  if (tabId === 'dashboard') {
-    loadAllData()
-  }
-  activeTab.value = tabId
-}
-
-function selectNavigationGroup(group) {
-  if (!canAccessTarget(group)) {
-    if (!isLoggedIn.value) showLoginModal.value = true
-    else error('A administração é restrita a administradores.')
-    return
-  }
-  const hasSubItems = group.tabs.length > 1
-  if (hasSubItems) {
-    expandedNavigationGroup.value = expandedNavigationGroup.value === group.id ? '' : group.id
-    return
-  }
-  if (group.target) {
-    navigateTab(group.target)
-    return
-  }
-  navigateTab(group.defaultTab)
-}
-
 function isNavigationTabActive(group, tab) {
   if (activeNavigationGroup.value !== group.id) return false
   const target = tab.target || { tab: tab.id }
   if (activeTab.value !== target.tab) return false
+  if (group.id === 'movimentacoes') {
+    return tab.id === 'movimentacoes'
+      ? !['historico', 'resumo'].includes(movSubTab.value)
+      : movSubTab.value === target.subTab
+  }
   if (target.section) return requestedInventorySection.value === target.section
   return true
 }
@@ -646,11 +629,20 @@ function navigateTab(target) {
   const options = typeof target === 'string' ? {} : (target || {})
   const tab = typeof target === 'string' ? target : options.tab
   if (!tab) return
-  if (!canAccessTarget(options)) {
+  if (!canAccessTarget(options) || (['cadastros', 'epis-admin'].includes(tab) && !isAdmin.value)) {
     if (!isLoggedIn.value) showLoginModal.value = true
     else error('Seu perfil não tem permissão para esta ação.')
     return
   }
+  if (tab === 'relatorios') {
+    requestedReportsTab.value = options.subTab || 'movimentacoes'
+    activeTab.value = tab
+    return
+  }
+  requestedItemId.value = options.itemId || ''
+  requestedVariationId.value = options.variationId || ''
+  requestedHighlightVariationId.value = options.highlightVariationId || ''
+  if (tab === 'catalogo' && options.clearSearch) catalogSearch.value = ''
   if ((tab === 'fechamentos' || options.section === 'fechamentos') && !isLoggedIn.value) {
     showLoginModal.value = true
     return
@@ -662,6 +654,7 @@ function navigateTab(target) {
   if (options.orderId) {
     const order = workOrders.value.find(item => item.id === options.orderId)
     if (order) {
+      activeTab.value = 'ordens'
       workOrderPreview.value = order
       return
     }
@@ -673,9 +666,14 @@ function navigateTab(target) {
     return
   }
   if (tab === 'inventario') {
-    const section = options.section || 'estoque'
-    const status = options.status ?? 'all'
-    const search = options.search || ''
+    const section = options.section || (applyingRoute ? 'estoque' : requestedInventorySection.value)
+    const status = options.status ?? (applyingRoute ? 'all' : requestedInventoryStatus.value)
+    const search = options.search ?? (applyingRoute ? '' : requestedInventorySearch.value)
+    if (!applyingRoute && !('search' in options) && !('status' in options)) {
+      requestedInventorySection.value = section
+      activeTab.value = 'inventario'
+      return
+    }
     requestedInventorySection.value = ''
     requestedInventoryStatus.value = '__pending__'
     requestedInventorySearch.value = ''
@@ -725,6 +723,42 @@ function navigateTab(target) {
   activeTab.value = tab
 }
 
+const currentRoute = computed(() => {
+  const route = { tab: activeTab.value }
+  if (route.tab === 'relatorios') route.subTab = requestedReportsTab.value
+  if (route.tab === 'catalogo') Object.assign(route, { search: catalogSearch.value, group: activeGroup.value, category: activeCategory.value, subcategory: activeSubcategory.value, itemId: requestedItemId.value, variationId: requestedVariationId.value, highlightVariationId: requestedHighlightVariationId.value })
+  if (route.tab === 'inventario') Object.assign(route, { section: requestedInventorySection.value, status: requestedInventoryStatus.value, search: requestedInventorySearch.value, variationId: requestedVariationId.value })
+  if (route.tab === 'movimentacoes') Object.assign(route, { subTab: movSubTab.value, search: movSubTab.value === 'historico' ? (movRef.value?.histSearch ?? requestedMovSearch.value) : '', variationId: movSubTab.value === 'historico' ? (movRef.value?.histVariationId ?? requestedVariationId.value) : '' })
+  if (route.tab === 'cadastros') route.subTab = requestedCadastrosTab.value
+  if (route.tab === 'ordens') Object.assign(route, { subTab: requestedOrdersTab.value, orderId: workOrderPreview.value?.id || requestedOrderFocusId.value })
+  return route
+})
+watch(currentRoute, route => {
+  if (!routeReady || applyingRoute || route.status === '__pending__' || (route.tab === 'inventario' && !route.section) || (route.tab === 'movimentacoes' && !route.subTab)) return
+  const href = routeHref(route)
+  if (href === window.location.hash) return
+  const method = routeIdentity(parseRoute(window.location.hash)) === routeIdentity(route) ? 'replaceState' : 'pushState'
+  window.history[method](null, '', href)
+})
+async function applyLocationRoute() {
+  const route = parseRoute(window.location.hash)
+  if (!route) return
+  applyingRoute = true
+  if (route.tab === 'ordens' && route.orderId) await loadSources(['ordens de serviço'])
+  workOrderPreview.value = null
+  navigateTab(route)
+  if (route.tab === 'catalogo') {
+    catalogSearch.value = route.search || ''
+    activeGroup.value = route.group || null
+    activeCategory.value = route.category || null
+    activeSubcategory.value = route.subcategory || null
+  }
+  if (route.tab === 'movimentacoes' && !route.subTab) { requestedMovSubTab.value = 'historico'; movSubTab.value = 'historico' }
+  await nextTick()
+  await nextTick()
+  applyingRoute = false
+}
+
 function handleGlobalShortcutKeydown(event) {
   const key = String(event.key || '').toLowerCase()
   if (key === 'escape') {
@@ -772,226 +806,33 @@ function handleGlobalShortcutKeydown(event) {
 </script>
 
 <template>
-  <div class="ds-page" :class="{ 'has-docked-sidebar': sidebarDocked }">
-    <!-- Catalog Sidebar -->
-    <AppSidebar
-      v-if="showCatalogSidebar"
-      id="mobile-side-panel"
-      :class="{ 'mobile-sidebar-open': mobileSidebarOpen, 'catalog-sidebar-docked': catalogSidebarDocked }"
-      :role="sidebarOverlayOpen ? 'dialog' : undefined"
-      :aria-modal="sidebarOverlayOpen ? 'true' : undefined"
-      aria-label="Categorias e filtros"
-      :groups="uniqueGroups"
-      :active-group="activeGroup"
-      :facets="facets"
-      :has-active-filters="hasActiveFilters"
-      :search="catalogSearch"
-      @close="closeCatalogSidebar"
-      @select-group="selectSidebarGroup"
-      @toggle-filter="(k, v) => toggleFilter(k, v)"
-      @clear-filters="clearFilters"
-      @update:search="v => catalogSearch = v"
-      @search-submit="catalogRef?.triggerSearchDrill?.()"
-    />
-
-    <!-- History Sidebar -->
-    <HistorySidebar
-      v-if="showHistorySidebar && movRef"
-      id="mobile-side-panel"
-      :class="{ 'mobile-sidebar-open': mobileSidebarOpen, 'history-sidebar-docked': historySidebarDocked }"
-      :role="sidebarOverlayOpen ? 'dialog' : undefined"
-      :aria-modal="sidebarOverlayOpen ? 'true' : undefined"
-      aria-label="Filtros do histórico"
-      :facets="movRef.histFacets"
-      :has-active-filters="movRef.hasHistFilters"
-      :search="movRef.histSearch"
-      :date-from="movRef.histDateFrom"
-      :date-to="movRef.histDateTo"
-      @close="closeMobileSidebar()"
-      @toggle-filter="(k, v) => movRef.toggleHistFilter(k, v)"
-      @clear-filters="movRef.clearHistFilters()"
-      @update:search="v => movRef.histSearch = v"
-      @update:date-from="v => movRef.histDateFrom = v"
-      @update:date-to="v => movRef.histDateTo = v"
-    />
-
-    <button
-      v-if="sidebarOverlayOpen"
-      type="button"
-      class="mobile-sidebar-backdrop"
-      aria-label="Fechar painel lateral"
-      @click="closeMobileSidebar()"
-    ></button>
-
-    <!-- Rail de navegação -->
-    <aside
-      class="ds-rail"
-      :class="{ 'rail-open': railOpen }"
-      :role="railOpen ? 'dialog' : undefined"
-      :aria-modal="railOpen ? 'true' : undefined"
-      aria-label="Navegação principal"
-    >
-      <button class="ds-rail-brand" type="button" title="Ir para o início" @click="selectMainTab('dashboard')">
-        <img
-          :src="localBrandFavicon"
-          :alt="localBrandName"
-          class="h-7 w-7 rounded-md object-contain"
-          @error="$event.currentTarget.style.display = 'none'"
-        />
-        <span class="ds-rail-brand-name text-sm truncate">{{ localBrandName }}</span>
-        <span
-          v-if="environmentBadge"
-          class="rounded px-1.5 py-0.5 text-[10px] font-bold leading-none"
-          :class="environmentBadge.env === 'PROD' ? 'bg-red-500/15 text-red-600 dark:text-red-400' : 'ds-environment-badge-dev'"
-        >
-          {{ environmentBadge.env }}
-        </span>
-      </button>
-
-      <nav class="ds-rail-nav ds-scrollbar">
-        <template v-for="group in visibleNavigationGroups" :key="group.id">
-          <button
-            type="button"
-            class="ds-rail-item"
-            :class="activeNavigationGroup === group.id ? 'ds-rail-item-active' : ''"
-            :title="group.requiresAdmin && !isAdmin ? 'Acesso restrito a administradores' : group.label"
-            :aria-expanded="group.tabs.length > 1 ? expandedNavigationGroup === group.id : undefined"
-            @click="selectNavigationGroup(group)"
-          >
-            <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" :d="group.icon" />
-            </svg>
-            {{ group.label }}
-            <svg
-              v-if="group.tabs.length > 1"
-              class="ml-auto transition-transform duration-150 motion-reduce:transition-none"
-              :class="expandedNavigationGroup === group.id ? 'rotate-90' : ''"
-              aria-hidden="true"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
-          <div v-if="expandedNavigationGroup === group.id && group.tabs.length > 1" class="ds-rail-sub">
-            <button
-              v-for="tab in group.tabs"
-              :key="tab.id"
-              type="button"
-              class="ds-rail-item"
-              :class="isNavigationTabActive(group, tab) ? 'ds-rail-item-active' : ''"
-              @click="navigateTab(tab.target || tab.id)"
-            >
-              {{ tab.label }}
-            </button>
-          </div>
-        </template>
-      </nav>
-
-    </aside>
-
-    <RailFooter
-      class="ds-fixed-rail-footer"
-      :class="{
-        'sidebar-footer-open': railOpen || anySidebar,
-        'sidebar-filter-active': anySidebar,
-      }"
-      :is-logged-in="isLoggedIn"
-      :user-name="user?.name || ''"
-      :is-dark="isDark"
-      @login="showLoginModal = true"
-      @change-password="openPasswordModal"
-      @logout="logoutFromMenu"
-      @toggle-theme="toggleTheme"
-    />
-
-    <button
-      v-if="railOpen"
-      type="button"
-      class="rail-backdrop"
-      aria-label="Fechar navegação"
-      @click="railOpen = false"
-    ></button>
-
+  <div class="ds-page">
     <!-- Main content -->
-    <div
-      class="ds-app-main"
-      :inert="sidebarOverlayOpen ? '' : undefined"
-    >
-      <!-- Topbar -->
+    <div class="ds-app-main">
       <header class="ds-topbar">
-        <AppButton
-          variant="ghost"
-          size="icon"
-          class="!w-9 !min-w-9 !h-9 min-[840px]:!hidden"
-          aria-label="Abrir navegação"
-          :aria-expanded="railOpen"
-          @click="railOpen = true"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-          </svg>
-        </AppButton>
-        <AppButton
-          v-if="catalogSidebarAvailable || showHistorySidebar"
-          ref="mobileSidebarTrigger"
-          class="!w-9 !min-w-9 !h-9"
-          variant="ghost"
-          size="icon"
-          aria-controls="mobile-side-panel"
-          :aria-expanded="sidebarDocked || mobileSidebarOpen"
-          :aria-label="sidebarDocked || mobileSidebarOpen ? 'Fechar filtros' : catalogSidebarAvailable ? 'Mostrar categorias e filtros' : 'Mostrar filtros'"
-          :title="sidebarDocked || mobileSidebarOpen ? 'Fechar filtros' : catalogSidebarAvailable ? 'Mostrar categorias e filtros' : 'Mostrar filtros'"
-          @click="toggleSidebar"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h16.5M6.75 12h10.5m-7.5 6.75h4.5" />
-          </svg>
-        </AppButton>
-        <span class="ds-topbar-title truncate">{{ activeTabLabel }}</span>
-        <div class="ml-auto flex items-center gap-1.5">
-          <AppButton
-            variant="secondary"
-            size="sm"
-            title="Busca global (Ctrl+K)"
-            @click="openGlobalSearch"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
-            </svg>
-            <span class="hidden sm:inline">Buscar</span>
-          </AppButton>
-          <div v-if="createActions.length" ref="globalCreateRootRef" class="relative">
-            <AppButton
-              variant="primary"
-              size="sm"
-              title="Registrar ou cadastrar (Ctrl+N)"
-              :aria-expanded="globalCreateOpen"
-              @click="openGlobalCreate"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              <span class="hidden sm:inline">Registrar</span>
-            </AppButton>
-            <div
-              v-if="globalCreateOpen"
-              class="ds-menu absolute right-0 mt-2 w-72 p-2"
-            >
-              <button
-                v-for="action in createActions"
-                :key="action.id"
-                type="button"
-                class="ds-menu-item"
-                @click="runCreateAction(action)"
-              >
-                <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ action.label }}</span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">{{ action.hint }}</span>
-              </button>
-            </div>
-          </div>
+        <AppLink target="dashboard" class="ds-nav-brand" title="Ir para o início" @navigate="navigateTab">
+          <img :src="localBrandHeaderLogo" :alt="localBrandName" class="h-7 w-7 rounded-md object-contain" @error="onHeaderLogoError" />
+          <span class="ds-nav-brand-name">{{ localBrandName }}</span>
+          <span
+            v-if="environmentBadge"
+            class="rounded px-1.5 py-0.5 text-[10px] font-bold leading-none"
+            :class="environmentBadge.env === 'PROD' ? 'bg-red-500/15 text-red-600 dark:text-red-400' : 'ds-environment-badge-dev'"
+          >{{ environmentBadge.env }}</span>
+        </AppLink>
+        <AppNavigation :groups="visibleNavigationGroups" @navigate="navigateTab" />
+        <div class="ds-topbar-tools">
+          <RailFooter
+            :is-logged-in="isLoggedIn"
+            :user-name="user?.username || user?.name || ''"
+            :is-dark="isDark"
+            :can-change-visual-style="canChangeVisualStyle"
+            :visual-style-name="visualStyleName"
+            @login="showLoginModal = true"
+            @change-password="openPasswordModal"
+            @logout="logoutFromMenu"
+            @toggle-visual-style="cycleStyle"
+            @toggle-theme="toggleTheme"
+          />
         </div>
       </header>
 
@@ -1023,8 +864,11 @@ function handleGlobalShortcutKeydown(event) {
           </AppButton>
         </div>
 
+        <div class="ds-workspace-layout">
+        <div class="min-w-0">
         <KeepAlive>
           <DashboardView v-if="activeTab === 'dashboard'" @go="navigateTab" />
+          <ReportsView v-else-if="activeTab === 'relatorios'" :initial-sub-tab="requestedReportsTab" @update:sub-tab="requestedReportsTab = $event" @go="navigateTab" />
         </KeepAlive>
 
         <!-- Catálogo tab -->
@@ -1032,6 +876,10 @@ function handleGlobalShortcutKeydown(event) {
           v-if="activeTab === 'catalogo'"
           ref="catalogRef"
           :search="catalogSearch"
+          :initial-item-id="requestedItemId"
+          :initial-variation-id="requestedVariationId"
+          :initial-highlight-variation-id="requestedHighlightVariationId"
+          @update:record="record => { requestedItemId = record.itemId || ''; requestedVariationId = record.variationId || ''; requestedHighlightVariationId = record.highlightVariationId || '' }"
           @update:search="v => catalogSearch = v"
           @quick-movement="openContextQuickMovement"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
@@ -1049,28 +897,34 @@ function handleGlobalShortcutKeydown(event) {
         <EpisTab v-if="activeTab === 'epis-admin' && isAdmin" />
 
         <!-- Inventário tab -->
+        <KeepAlive>
         <InventarioView
           v-if="activeTab === 'inventario'"
           :initial-section="requestedInventorySection"
           :initial-status="requestedInventoryStatus"
           :initial-search="requestedInventorySearch"
+          :initial-variation-id="requestedVariationId"
+          @update:variation="id => requestedVariationId = id"
           @update:section="v => requestedInventorySection = v"
           @update:status="v => requestedInventoryStatus = v"
           @update:search="v => requestedInventorySearch = v"
           @quick-movement="openContextQuickMovement"
+          @navigate="navigateTab"
           @open-work-order="order => navigateTab({ tab: 'ordens', subTab: 'ordens', orderId: order.id })"
         />
 
+        </KeepAlive>
         <!-- Movimentações tab -->
         <MovimentacoesView
           v-if="activeTab === 'movimentacoes'"
           ref="movRef"
           :initial-sub-tab="requestedMovSubTab"
           :initial-history-search="requestedMovSearch"
+          :initial-history-variation-id="requestedMovSubTab === 'historico' ? requestedVariationId : ''"
           :prefill-movement="requestedMovementPrefill"
-          @update:browsing="v => movBrowsing = v"
           @update:sub-tab="v => { movSubTab = v; requestedMovSubTab = v }"
           @movement-complete="handleMovementComplete"
+          @navigate="navigateTab"
         />
 
         <!-- Ordens de Serviço tab -->
@@ -1084,6 +938,8 @@ function handleGlobalShortcutKeydown(event) {
 
         <!-- Motores tab -->
         <MotoresView v-if="activeTab === 'motores'" />
+        </div>
+        </div>
       </main>
     </div>
 
@@ -1101,6 +957,16 @@ function handleGlobalShortcutKeydown(event) {
 
     <!-- Login modal -->
     <LoginModal :show="showLoginModal" @close="showLoginModal = false" />
+
+    <AppDialog :visible="globalCreateOpen" align="top" aria-label="Registrar ou cadastrar" @close="globalCreateOpen = false">
+      <div class="ds-menu w-full max-w-md rounded-xl p-3">
+        <h2 class="px-3 py-2 font-semibold">Registrar ou cadastrar</h2>
+        <button v-for="action in createActions" :key="action.id" type="button" class="ds-menu-item" @click="runCreateAction(action)">
+          <span class="block text-sm font-semibold">{{ action.label }}</span>
+          <span class="ds-muted block text-xs">{{ action.hint }}</span>
+        </button>
+      </div>
+    </AppDialog>
 
     <AppDialog
       :visible="globalSearchOpen"
@@ -1250,6 +1116,7 @@ function handleGlobalShortcutKeydown(event) {
     </div>
 
     <!-- Toasts -->
-    <ToastContainer />
+    <ToastContainer :update-available="updateAvailable" @reload="reloadApp" @dismiss-update="dismissUpdate" />
+    <StockConfirmationDialog />
   </div>
 </template>

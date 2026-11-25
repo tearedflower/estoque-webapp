@@ -28,9 +28,16 @@ Assinatura do produto: ficha de circulacao que conecta material, saldo, local ou
 
 - Nunca combinar `bg-primary-*` com `text-white` assumindo que a escala primaria e escura.
 - Usar `--ds-primary-text` sobre fundos primarios; nunca presumir texto branco.
+- Nos modos claro e escuro, acoes, navegacao ativa e destaques solidos usam o mesmo laranja vivo da paleta central, sem o antigo marrom. Selecao de destinos permanece solida.
 - Estados ativos usam `--ds-active-bg` com `--ds-active-text`.
-- Tags de atributos usam `.ds-attribute-tag`: `--ds-surface`, `--ds-border` e `--ds-text-soft`.
-- No Industrial escuro: grafite no canvas, superficies proximas, bordas discretas e texto claro sem branco puro.
+- Atributos usam ordem alfabetica por padrao; a ordem manual definida no modelo de item prevalece e fica salva por modelo em display_order.itemAttributes.
+- Tags de atributos usam `.ds-attribute-tag`: `--ds-tag-bg`, `--ds-tag-border` e `--ds-tag-text`, iguais em todas as telas.
+- No Industrial claro: canvas cinza frio, paineis brancos, campos discretos e texto secundario com contraste legivel.
+- No Industrial escuro: grafite azulado sem preto puro, superficies proximas, bordas discretas e texto claro sem branco puro.
+- Selecao usa ambar suave com texto contrastante; preenchimento solido fica reservado a acoes.
+- Cores de aviso em texto usam `--ds-danger`/`--ds-success`; botoes solidos usam `--ds-danger-solid`/`--ds-success-solid` e suas variantes `-hover`.
+- Sombras e sobreposicoes usam `--ds-shadow-panel`, `--ds-shadow-control`, `--ds-shadow-pop` e `--ds-overlay`.
+- Cores literais ficam na paleta do tema; o preto e branco da ficha de EPI para impressao e uma excecao intencional.
 - Texto normal deve atingir contraste WCAG AA; estados interativos nao podem depender apenas da borda.
 
 ## Padroes reutilizaveis
@@ -49,6 +56,15 @@ Assinatura do produto: ficha de circulacao que conecta material, saldo, local ou
 - Falha de sincronizacao: aviso persistente com fontes afetadas e acao `Tentar novamente`.
 - Fechamento mensal: sempre passa por previa com periodo, movimentos, alertas e indicacao de substituicao.
 - Ficha de circulacao: saldo, local, destinos, ultima movimentacao e OS relacionadas; cada OS abre diretamente no modulo de manutencao.
+
+## Movimento
+
+- Acordeoes: wrapper `.ds-collapse` + `.ds-collapse-open` com UM filho direto; grid `0fr/1fr`, 200 ms, `visibility` junto para sair da arvore de acessibilidade quando fechado. Nunca `v-if` no corpo do acordeao.
+- Dropdowns/popovers: classe `.ds-pop` no elemento (entrada 150 ms via `@starting-style`, saida instantanea); variante `.ds-pop-up` quando abre para cima.
+- Modais: entrada animada no proprio `AppDialog` (fade + subida leve, backdrop 160 ms); saida instantanea por design.
+- Toasts: entrada 180 ms, saida 120 ms, apenas `opacity` e `transform`; reordenacao usa 180 ms.
+- Botoes: `:active` com `scale(0.97)`.
+- Curva padrao `cubic-bezier(0.23, 1, 0.32, 1)`; tudo desligado em `prefers-reduced-motion`.
 
 ## Referencias
 

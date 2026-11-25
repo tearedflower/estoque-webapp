@@ -11,6 +11,11 @@ export function searchTokens(value) {
   return normalizeSearchText(value).split(/[^a-z0-9]+/).filter(Boolean)
 }
 
+export function filterPeopleByName(people, query) {
+  const tokens = searchTokens(query)
+  return people.filter(person => matchesSearchTokens(person.name, tokens))
+}
+
 export function matchesSearchTokens(value, tokens) {
   const normalized = normalizeSearchText(value)
   return tokens.every(token => normalized.includes(token))

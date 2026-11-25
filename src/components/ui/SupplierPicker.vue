@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
       <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
     </button>
 
-    <div v-if="open" :id="`supplier-options-${pickerId}`" role="listbox" class="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 max-h-60 overflow-auto rounded-lg border border-gray-300 bg-white text-sm text-gray-900 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+    <div v-if="open" :id="`supplier-options-${pickerId}`" role="listbox" class="ds-pop absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 max-h-60 overflow-auto rounded-lg border border-gray-300 bg-white text-sm text-gray-900 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
       <button type="button" role="option" :aria-selected="!modelValue" class="w-full px-3 py-2 text-left text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800" @mousedown.prevent="clearSelection">Sem fornecedor</button>
       <button v-if="typedName && !exactSupplier" type="button" role="option" aria-selected="false" class="w-full border-y border-gray-200 px-3 py-2 text-left text-xs font-semibold text-primary-700 hover:bg-primary-50 dark:border-gray-700 dark:text-primary-300 dark:hover:bg-primary-950/40" @mousedown.prevent="commitSearch">Cadastrar “{{ typedName }}” ao confirmar</button>
       <button

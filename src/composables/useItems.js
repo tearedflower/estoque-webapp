@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import * as api from '../services/api.js'
+import { orderedAttributeNames } from '../utils/attributes.js'
 
 /**
  * Returns the stock alert status for a single variation.
@@ -9,10 +10,13 @@ import * as api from '../services/api.js'
  * 'ok'       — no issue
  */
 export function stockAlertStatus(variation, item) {
-  const min = variation.minStock ?? 0
-  if (variation.stock <= 0) return 'zero'
-  if (min > 0 && variation.stock <= min) return 'critical'
-  if (min > 0 && variation.stock <= min * 2) return 'alert'
+  const stock = Number(variation.stock || 0)
+  const min = Number(variation.minStock || 0)
+  if (stock < 0) return 'zero'
+  if (min <= 0) return 'ok'
+  if (stock === 0) return 'zero'
+  if (stock <= min) return 'critical'
+  if (stock <= min * 2) return 'alert'
   return 'ok'
 }
 
@@ -96,6 +100,10 @@ function _sameStructureName(a, b) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
 }
 
+function _sameAttributeName(a, b) {
+  return String(a || '').trim().localeCompare(String(b || '').trim(), 'pt-BR', { sensitivity: 'base' }) === 0
+}
+
 function _itemHasVariations(itemId) {
   return variationIndex.value.byItem.has(itemId)
 }
@@ -146,6 +154,11 @@ function _sanitizeNumber(val, min = 0) {
   return Math.max(min, Math.round(n))
 }
 
+function _sanitizeOptionalNumber(val) {
+  if (val === null || val === undefined || String(val).trim() === '') return null
+  return _sanitizeNumber(val)
+}
+
 /**
  * Checks if a variation with the exact same attribute values already exists
  * for the given item. Optionally excludes one variation id (for edits).
@@ -188,9 +201,9 @@ export function useItems() {
       api.getVariations(),
       api.getDisplayOrder()
     ])
-    if (itemsRes.status === 'fulfilled') items.value = sortItems(itemsRes.value)
-    if (varsRes.status === 'fulfilled') variations.value = sortVariations(varsRes.value)
     if (orderRes.status === 'fulfilled') orderData.value = orderRes.value || {}
+    if (itemsRes.status === 'fulfilled') items.value = sortItems(itemsRes.value.map(item => ({ ...item, attributeOrder: orderData.value.itemAttributes?.[item.id] || [] })))
+    if (varsRes.status === 'fulfilled') variations.value = sortVariations(varsRes.value)
     const failed = [itemsRes, varsRes, orderRes].filter(result => result.status === 'rejected')
     if (failed.length) throw new AggregateError(failed.map(result => result.reason), 'Falha ao carregar materiais')
   }
@@ -214,7 +227,7 @@ export function useItems() {
         category: data.category || null,
         subcategory: data.subcategory || null,
         unit: data.unit || 'UN',
-        minStock: _sanitizeNumber(data.minStock),
+        minStock: _sanitizeOptionalNumber(data.minStock),
         attributes: data.attributes || [],
         location: data.location || ''
       })
@@ -229,7 +242,7 @@ export function useItems() {
   async function editItem(id, changes) {
     const item = items.value.find(i => i.id === id)
     if (!item) return { ok: false, error: 'Item não encontrado.' }
-    if (changes.minStock !== undefined) changes.minStock = _sanitizeNumber(changes.minStock)
+    if (changes.minStock !== undefined) changes.minStock = _sanitizeOptionalNumber(changes.minStock)
     const merged = { ...item, ...changes }
     const duplicate = _findDuplicateItem(merged, id)
     if (duplicate) {
@@ -262,7 +275,7 @@ export function useItems() {
    */
   async function addVariation(itemId, values = {}, stock = 0, minStock = null, extras = {}, location = '', destinations = []) {
     const sanitizedStock = _sanitizeNumber(stock)
-    const sanitizedMinStock = _sanitizeNumber(minStock ?? 0)
+    const sanitizedMinStock = _sanitizeOptionalNumber(minStock)
     if (_hasDuplicateVariation(itemId, values)) {
       return { ok: false, error: 'Já existe uma variação com esses mesmos atributos.' }
     }
@@ -284,16 +297,18 @@ export function useItems() {
   async function editVariation(id, changes) {
     const v = variations.value.find(v => v.id === id)
     if (!v) return { ok: false, error: 'Variação não encontrada.' }
+    const targetItemId = changes.itemId || v.itemId
     if (changes.values !== undefined) {
-      if (_hasDuplicateVariation(v.itemId, changes.values, id)) {
+      if (_hasDuplicateVariation(targetItemId, changes.values, id)) {
         return { ok: false, error: 'Já existe uma variação com esses mesmos atributos.' }
       }
     }
     const updated = { ...v }
+    updated.itemId = targetItemId
     if (changes.values !== undefined) updated.values = { ...changes.values }
     if (changes.stock !== undefined) updated.stock = _sanitizeNumber(changes.stock)
     if (changes.initialStock !== undefined) updated.initialStock = _sanitizeNumber(changes.initialStock)
-    if (changes.minStock !== undefined) updated.minStock = _sanitizeNumber(changes.minStock)
+    if (changes.minStock !== undefined) updated.minStock = _sanitizeOptionalNumber(changes.minStock)
     if (changes.extras !== undefined) updated.extras = { ...changes.extras }
     if (changes.location !== undefined) updated.location = changes.location
     if (changes.locations !== undefined) {
@@ -305,6 +320,12 @@ export function useItems() {
     Object.assign(v, result)
     variations.value = sortVariations(variations.value)
     return { ok: true }
+  }
+
+  async function editVariationsBulk(ids, change) {
+    const result = await api.updateVariationsBulk(ids, change)
+    await loadData()
+    return result
   }
 
   async function deleteVariation(id) {
@@ -558,33 +579,44 @@ export function useItems() {
 
   async function renameAttribute(itemId, oldName, newName) {
     const item = items.value.find(i => i.id === itemId)
-    if (!item) return
+    if (!item) return { ok: false, error: 'Modelo não encontrado.' }
+    const cleanName = String(newName || '').trim()
+    if (!cleanName) return { ok: false, error: 'Informe o nome do atributo.' }
+    if (item.attributes.some(name => name !== oldName && _sameAttributeName(name, cleanName))) {
+      return { ok: false, error: `O atributo "${cleanName}" já existe neste modelo.` }
+    }
     const idx = item.attributes.indexOf(oldName)
-    if (idx < 0) return
-    item.attributes[idx] = newName
+    if (idx < 0) return { ok: false, error: 'Atributo não encontrado.' }
+    item.attributes[idx] = cleanName
     const affectedVars = []
     for (const v of variations.value) {
       if (v.itemId === itemId && oldName in v.values) {
-        v.values[newName] = v.values[oldName]
+        v.values[cleanName] = v.values[oldName]
         delete v.values[oldName]
         affectedVars.push(v)
       }
     }
     await api.updateItem(itemId, { ...item })
     await Promise.all(affectedVars.map(v => api.updateVariation(v.id, { ...v })))
+    return { ok: true, affectedVariations: affectedVars.length }
   }
 
   async function addAttribute(itemId, attrName) {
     const item = items.value.find(i => i.id === itemId)
-    if (!item) return
-    if (item.attributes.includes(attrName)) return
-    item.attributes.push(attrName)
+    if (!item) return { ok: false, error: 'Modelo não encontrado.' }
+    const cleanName = String(attrName || '').trim()
+    if (!cleanName) return { ok: false, error: 'Informe o nome do atributo.' }
+    if (item.attributes.some(name => _sameAttributeName(name, cleanName))) {
+      return { ok: false, error: `O atributo "${cleanName}" já existe neste modelo.` }
+    }
+    item.attributes.push(cleanName)
     await api.updateItem(itemId, { ...item })
+    return { ok: true }
   }
 
   async function removeAttribute(itemId, attrName) {
     const item = items.value.find(i => i.id === itemId)
-    if (!item) return
+    if (!item) return { ok: false, error: 'Modelo não encontrado.' }
     item.attributes = item.attributes.filter(a => a !== attrName)
     const affectedVars = []
     for (const v of variations.value) {
@@ -595,6 +627,7 @@ export function useItems() {
     }
     await api.updateItem(itemId, { ...item })
     await Promise.all(affectedVars.map(v => api.updateVariation(v.id, { ...v })))
+    return { ok: true, affectedVariations: affectedVars.length }
   }
 
   // ===== Reorder =====
@@ -644,8 +677,13 @@ export function useItems() {
   async function reorderItemAttributes(itemId, from, to) {
     const item = items.value.find(i => i.id === itemId)
     if (!item) return
-    item.attributes = _splice(item.attributes, from, to)
-    await api.updateItem(itemId, { ...item })
+    const attributes = orderedAttributeNames(item)
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= attributes.length || to >= attributes.length || from === to) return
+    const attributeOrder = _splice(attributes, from, to)
+    const nextOrder = { ...orderData.value, itemAttributes: { ...orderData.value.itemAttributes, [itemId]: attributeOrder } }
+    await api.saveDisplayOrder(nextOrder)
+    orderData.value = nextOrder
+    item.attributeOrder = attributeOrder
   }
 
   // ===== Reset =====
@@ -839,7 +877,7 @@ export function useItems() {
     // CRUD
     addItem, editItem, deleteItem, findDuplicateItem: _findDuplicateItem,
     // Variations
-    getVariationsForItem, addVariation, editVariation, deleteVariation, getTotalStock,
+    getVariationsForItem, addVariation, editVariation, editVariationsBulk, deleteVariation, getTotalStock,
     // Hierarchy lookups
     uniqueGroups, getCategoriesForGroup, getSubcategoriesForCategory,
     // Catalog tree

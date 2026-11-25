@@ -1,6 +1,8 @@
 <script setup>
 import { useToast } from '../../composables/useToast.js'
 
+defineProps({ updateAvailable: Boolean })
+const emit = defineEmits(['reload', 'dismiss-update'])
 const { toasts } = useToast()
 </script>
 
@@ -11,10 +13,10 @@ const { toasts } = useToast()
         <div
           v-for="toast in toasts"
           :key="toast.id"
-          class="rounded-lg border px-4 py-3 text-sm font-medium shadow-lg transition-all duration-300"
+          class="ds-toast rounded-lg border px-4 py-3 text-sm font-medium"
           :class="{
-            'border-emerald-500/25 bg-emerald-600 text-white dark:border-emerald-500/40 dark:bg-emerald-950 dark:text-emerald-100': toast.type === 'success',
-            'border-red-500/25 bg-red-600 text-white dark:border-red-500/40 dark:bg-red-950 dark:text-red-100': toast.type === 'error'
+            'ds-toast-success': toast.type === 'success',
+            'ds-toast-error': toast.type === 'error'
           }"
         >
           <div class="flex items-center gap-3">
@@ -22,12 +24,34 @@ const { toasts } = useToast()
             <button
               v-if="toast.action"
               type="button"
-              class="rounded-md bg-white/20 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/30"
+              class="ds-toast-action rounded-md px-2.5 py-1 text-xs font-semibold transition-colors"
               @click="toast.action.onClick"
             >
               {{ toast.action.label }}
             </button>
           </div>
+        </div>
+        <div
+          v-if="updateAvailable"
+          key="app-update"
+          class="ds-toast flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3 text-sm font-medium"
+        >
+          <span role="status" class="flex-1">Nova versão disponível</span>
+          <button
+            type="button"
+            class="ds-toast-action rounded-md px-2.5 py-1 text-xs font-semibold transition-colors"
+            @click="emit('reload')"
+          >
+            Recarregar página
+          </button>
+          <button
+            type="button"
+            class="ds-toast-action ml-auto flex h-7 w-7 items-center justify-center rounded-md text-base"
+            aria-label="Fechar aviso de atualização"
+            @click="emit('dismiss-update')"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
       </TransitionGroup>
     </div>
@@ -35,10 +59,30 @@ const { toasts } = useToast()
 </template>
 
 <style scoped>
-.toast-enter-active { animation: slideIn 0.3s ease; }
-.toast-leave-active { animation: slideIn 0.3s ease reverse; }
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(40px); }
-  to { opacity: 1; transform: translateX(0); }
+.ds-toast { --toast-color: var(--ds-info); color: var(--ds-text); background: var(--ds-panel); border-color: var(--ds-border); border-left: 3px solid var(--toast-color); box-shadow: var(--ds-shadow-pop); }
+.ds-toast-success { --toast-color: var(--ds-success); }
+.ds-toast-error { --toast-color: var(--ds-danger); }
+.ds-toast-action { color: var(--ds-text); background: var(--ds-surface); }
+.ds-toast-action:hover { background: var(--ds-surface-hover); }
+.toast-enter-active {
+  transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1), transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.toast-leave-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.toast-move {
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter-active,
+  .toast-leave-active,
+  .toast-move {
+    transition: none;
+  }
 }
 </style>

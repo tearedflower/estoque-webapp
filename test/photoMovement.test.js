@@ -171,10 +171,10 @@ test('reuses the Gemini suggestion when cataloging and moving a new item', () =>
   assert.equal(photoBatchBlockReason(batch, [photo], items, variations), '')
 })
 
-test('blocks a new-item exit above its declared existing balance', () => {
+test('defers a new-item exit balance check to the mandatory physical count', () => {
   const batch = { type: 'saida', defaults: { requestedBy: 'Maria', requestedByPersonId: 'person_1', destination: 'Fábrica', destinationId: 'dest_1' } }
   const photo = { createCatalog: true, catalog: { ...photoCatalogDraft(suggestion()), initialStock: 2 }, status: 'matched', qty: 3 }
-  assert.match(photoBatchBlockReason(batch, [photo], items, variations), /excede o saldo/i)
+  assert.equal(photoBatchBlockReason(batch, [photo], items, variations), '')
   photo.catalog.initialStock = 3
   assert.equal(photoBatchBlockReason(batch, [photo], items, variations), '')
 })

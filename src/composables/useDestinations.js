@@ -3,13 +3,26 @@ import * as api from '../services/api.js'
 
 // Singleton state
 const destinations = ref([])
+const destinationOrder = ref([])
 const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
 
-function sortByName(list) {
+export function sortDestinationsByOrder(list, ids = []) {
+  const order = new Map(ids.map((id, index) => [id, index]))
   return [...list].sort((a, b) =>
+    (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
     collator.compare(a.name || '', b.name || '') ||
     String(a.id || '').localeCompare(String(b.id || ''))
   )
+}
+
+function sortDestinations(list) {
+  return sortDestinationsByOrder(list, destinationOrder.value)
+}
+
+async function saveDestinationOrder(ids) {
+  destinationOrder.value = ids
+  const current = await api.getDisplayOrder()
+  await api.saveDisplayOrder({ ...current, destinations: ids })
 }
 
 export function destinationMoveError(list, id, parentId) {
@@ -54,27 +67,29 @@ export function destinationDescendants(list, parentId) {
 
 export function useDestinations() {
   async function loadData() {
-    destinations.value = sortByName(await api.getDestinations())
+    const [list, order] = await Promise.all([api.getDestinations(), api.getDisplayOrder()])
+    destinationOrder.value = Array.isArray(order?.destinations) ? order.destinations : []
+    destinations.value = sortDestinations(list)
   }
 
   const activeDestinations = computed(() =>
-    sortByName(destinations.value.filter(d => d.active))
+    sortDestinations(destinations.value.filter(d => d.active))
   )
 
   const topLevelDestinations = computed(() =>
-    sortByName(destinations.value.filter(d => !d.parentId))
+    sortDestinations(destinations.value.filter(d => !d.parentId))
   )
 
   const activeTopLevelDest = computed(() =>
-    sortByName(destinations.value.filter(d => !d.parentId && d.active))
+    sortDestinations(destinations.value.filter(d => !d.parentId && d.active))
   )
 
   function getDestChildren(parentId) {
-    return sortByName(destinations.value.filter(d => d.parentId === parentId))
+    return sortDestinations(destinations.value.filter(d => d.parentId === parentId))
   }
 
   function getActiveDestChildren(parentId) {
-    return sortByName(destinations.value.filter(d => d.parentId === parentId && d.active))
+    return sortDestinations(destinations.value.filter(d => d.parentId === parentId && d.active))
   }
 
   function getDestDescendants(parentId, activeOnly = false) {
@@ -130,7 +145,7 @@ export function useDestinations() {
       materialRules: [],
     })
     destinations.value.push(created)
-    destinations.value = sortByName(destinations.value)
+    destinations.value = sortDestinations(destinations.value)
     return { ok: true, destination: created }
   }
 
@@ -150,8 +165,23 @@ export function useDestinations() {
     }
     const updated = await api.updateDestination(id, { ...d, materialRules: d.materialRules || [], ...changes })
     Object.assign(d, updated)
-    destinations.value = sortByName(destinations.value)
+    destinations.value = sortDestinations(destinations.value)
     return { ok: true }
+  }
+
+  async function reorderDestinations(from, to) {
+    const ordered = [...topLevelDestinations.value]
+    const [destination] = ordered.splice(from, 1)
+    if (!destination) return
+    ordered.splice(to, 0, destination)
+    await saveDestinationOrder(ordered.map(d => d.id))
+    destinations.value = sortDestinations(destinations.value)
+  }
+
+  async function sortDestinationsAlphabetically() {
+    const ordered = [...topLevelDestinations.value].sort((a, b) => collator.compare(a.name, b.name))
+    await saveDestinationOrder(ordered.map(d => d.id))
+    destinations.value = sortDestinations(destinations.value)
   }
 
   async function toggleDestinationActive(id) {
@@ -188,6 +218,8 @@ export function useDestinations() {
     getDestFullName,
     addDestination,
     editDestination,
+    reorderDestinations,
+    sortDestinationsAlphabetically,
     toggleDestinationActive,
     deleteDestination,
     getDestinationById,

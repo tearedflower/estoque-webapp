@@ -926,7 +926,7 @@ function workOrderEndLabel(order) {
                 <span class="font-semibold" :class="variation.stock <= 0 ? 'text-red-500' : 'text-green-500'">{{ variation.stock }}</span>
                 <span class="ml-1 text-xs text-gray-400">{{ item.unit }}</span>
               </td>
-              <td class="px-4 py-3 text-center tabular-nums text-gray-700 dark:text-gray-300">{{ variation.minStock ?? 0 }}</td>
+              <td class="px-4 py-3 text-center tabular-nums text-gray-700 dark:text-gray-300">{{ variation.minStock ?? '—' }}</td>
               <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ material.note || '-' }}</td>
               <td v-if="isAdmin" class="px-4 py-3 text-right">
                 <AppButton variant="danger" size="xs" @click="deleteMotorMaterial(material)">Remover</AppButton>
@@ -981,7 +981,7 @@ function workOrderEndLabel(order) {
                 </span>
                 <span class="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
                   <span class="block font-semibold" :class="row.variation.stock <= 0 ? 'text-red-500' : 'text-green-500'">{{ row.variation.stock }} {{ row.item.unit }}</span>
-                  <span>min. {{ row.variation.minStock ?? 0 }}</span>
+                  <span>min. {{ row.variation.minStock ?? '—' }}</span>
                 </span>
               </button>
               <p v-if="!motorMaterialOptions.length" class="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
@@ -1027,7 +1027,7 @@ function workOrderEndLabel(order) {
                   v-for="group in motorMaterialGroups"
                   :key="group"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMotorMaterialGroup(group)"
                 >
                   <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 transition-colors group-hover:bg-primary-100 dark:bg-primary-900/30 dark:group-hover:bg-primary-900/50">
@@ -1047,7 +1047,7 @@ function workOrderEndLabel(order) {
                   v-for="category in motorMaterialCategories"
                   :key="category"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMotorMaterialCategory(category)"
                 >
                   <p class="mb-1 truncate text-sm font-bold text-gray-800 dark:text-gray-100">{{ category }}</p>
@@ -1062,7 +1062,7 @@ function workOrderEndLabel(order) {
                   v-for="subcategory in motorMaterialSubcategories"
                   :key="subcategory"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-5 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="selectMotorMaterialSubcategory(subcategory)"
                 >
                   <p class="mb-1 truncate text-sm font-bold text-gray-800 dark:text-gray-100">{{ subcategory }}</p>
@@ -1077,7 +1077,7 @@ function workOrderEndLabel(order) {
                   v-for="item in motorMaterialItems"
                   :key="item.id"
                   type="button"
-                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
+                  class="group cursor-pointer rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors duration-100 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-500"
                   @click="motorMaterialItemId = item.id"
                 >
                   <p class="mb-1 truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{{ item.name }}</p>
@@ -1779,7 +1779,7 @@ function workOrderEndLabel(order) {
             class="grid grid-cols-[12px_minmax(0,1fr)] gap-3"
           >
             <div class="flex flex-col items-center">
-              <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" :class="!entry.endDate ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
+              <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" :class="!entry.endDate ? 'bg-[var(--ds-success-solid)]' : 'bg-gray-400 dark:bg-gray-600'"></span>
               <span v-if="index < selectedMotorLocationTrail.length - 1" class="my-1 w-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
             </div>
             <div class="min-w-0 pb-5">

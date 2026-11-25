@@ -1,4 +1,10 @@
+import { requestStockCounts, stockConfirmationRevision } from '../composables/useStockConfirmation.js'
+
 const BASE = '/api'
+
+function requestKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+}
 
 function setAuthData(user) {
   localStorage.setItem('auth_user', JSON.stringify(user))
@@ -21,26 +27,44 @@ function apiError(response, data = {}) {
   return error
 }
 
-async function request(path, options = {}) {
+async function request(path, options = {}, allowStockConfirmation = true) {
   const url = BASE + path
   const headers = {
     ...options.headers
   }
+  const repeatable = options.method === 'POST' && (/^\/movements(?:\/batch)?$/.test(path) || /^\/work-orders\/[^/]+\/items$/.test(path))
+  if (repeatable && !headers['Idempotency-Key']) headers['Idempotency-Key'] = JSON.parse(options.body || '{}').requestId || requestKey()
 
   // Only set Content-Type for requests with a body (POST, PUT, etc.)
   if (options.body && !Object.keys(headers).some(key => key.toLowerCase() === 'content-type')) {
     headers['Content-Type'] = 'application/json'
   }
 
-  const res = await fetch(url, { ...options, headers, credentials: 'include' })
+  let res
+  for (let attempt = 0; ; attempt++) {
+    try { res = await fetch(url, { ...options, headers, credentials: 'include' }); break }
+    catch (error) { if (!repeatable || attempt > 0) throw error }
+  }
 
   if (res.status === 401) {
     clearAuthData()
+    globalThis.window?.dispatchEvent(new Event('app:session-expired'))
   }
 
   const data = await res.json().catch(() => ({}))
 
+  if (res.status === 409 && data.code === 'STOCK_CONFIRMATION_REQUIRED' && allowStockConfirmation) {
+    const stockCounts = await requestStockCounts(data.confirmations)
+    const result = await request(path, { ...options, headers, body: JSON.stringify({ ...JSON.parse(options.body), stockCounts }) }, false)
+    stockConfirmationRevision.value++
+    return result
+  }
+
   if (!res.ok) throw apiError(res, data)
+
+  if (options.method && options.method !== 'GET') {
+    globalThis.window?.dispatchEvent(new CustomEvent('app:resources-invalidated', { detail: path }))
+  }
 
   return data
 }
@@ -128,6 +152,10 @@ export async function updateVariation(id, data) {
   return request(`/items/variations/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
+export async function updateVariationsBulk(ids, change) {
+  return request('/items/variations/bulk', { method: 'PUT', body: JSON.stringify({ ids, change }) })
+}
+
 export async function deleteVariation(id) {
   return request(`/items/variations/${id}`, { method: 'DELETE' })
 }
@@ -143,6 +171,14 @@ export async function createMovement(data) {
 
 export async function createMovementBatch(data) {
   return request('/movements/batch', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function getMovementImportMappings() {
+  return request('/movements/import-mappings')
+}
+
+export async function importMovementHistory(data) {
+  return request('/movements/import-history', { method: 'POST', body: JSON.stringify(data) })
 }
 
 // ===== Photo movement batches =====
@@ -204,8 +240,12 @@ export async function updateMovement(id, data) {
   return request(`/movements/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
-export async function deleteMovement(id) {
-  return request(`/movements/${id}`, { method: 'DELETE' })
+export async function deleteMovement(id, data = {}) {
+  return request(`/movements/${id}`, { method: 'DELETE', body: JSON.stringify(data) })
+}
+
+export async function getMovementAuditPage(query = {}) {
+  return request('/movements/audit?' + new URLSearchParams(query))
 }
 
 // ===== Locations =====
@@ -259,6 +299,18 @@ export async function deletePerson(id) {
   return request(`/people/${id}`, { method: 'DELETE' })
 }
 
+export async function getPeopleRoleSync() {
+  return request('/people-role-sync')
+}
+
+export async function updatePeopleRoleSync(enabled) {
+  return request('/people-role-sync', { method: 'PUT', body: JSON.stringify({ enabled }) })
+}
+
+export async function runPeopleRoleSync() {
+  return request('/people-role-sync/run', { method: 'POST' })
+}
+
 // ===== Suppliers =====
 export async function getSuppliers() {
   return request('/suppliers')
@@ -304,6 +356,14 @@ export async function createEpiRoleRule(data) {
 
 export async function updateEpiRoleRule(id, data) {
   return request(`/epis/role-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function updateEpiRoleBatch(changes) {
+  return request('/epis/role-rules/batch', { method: 'PUT', body: JSON.stringify({ changes }) })
+}
+
+export async function convertEpiRolesToItems(changes, allowedCas) {
+  return request('/epis/role-rules/use-item', { method: 'PUT', body: JSON.stringify({ changes, allowedCas }) })
 }
 
 export async function deleteEpiRoleRule(id) {
@@ -403,6 +463,11 @@ export async function createClosing(data) {
 
 export async function deleteClosing(id) {
   return request(`/closings/${id}`, { method: 'DELETE' })
+}
+
+export async function getRecentMovementDefaults(variationId, type) {
+  const params = new URLSearchParams({ variationId, type })
+  return request(`/automation/recent-defaults?${params}`)
 }
 
 // ===== Motors =====

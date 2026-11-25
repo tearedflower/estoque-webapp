@@ -16,10 +16,13 @@ const isDev = computed(() =>
 
 const newRoleName = ref('')
 const newRoleDesc = ref('')
+const newRoleSector = ref('')
 const addingRole = ref(false)
 const editingRoleId = ref(null)
 const editRoleName = ref('')
 const editRoleDesc = ref('')
+const editRoleSector = ref('')
+const existingSectors = computed(() => [...new Set(roles.value.map(role => role.sector).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')))
 const roleSearch = ref('')
 const roleStatusFilter = ref('all')
 const currentPage = ref(1)
@@ -45,7 +48,7 @@ const filteredRoles = computed(() =>
     .filter(role => {
       const q = normalizeSearch(roleSearch.value)
       if (!q) return true
-      return [role.name, role.description, role.active ? 'ativo' : 'inativo']
+      return [role.name, role.description, role.sector, role.active ? 'ativo' : 'inativo']
         .some(value => normalizeSearch(value).includes(q))
     })
 )
@@ -54,11 +57,7 @@ const paginatedRoles = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredRoles.value.slice(start, start + pageSize.value)
 })
-const pageRoleIds = computed(() => paginatedRoles.value.map(role => role.id))
 const selectedRoles = computed(() => roles.value.filter(role => selectedRoleIds.value.includes(role.id)))
-const allPageRolesSelected = computed(() =>
-  pageRoleIds.value.length > 0 && pageRoleIds.value.every(id => selectedRoleIds.value.includes(id))
-)
 
 watch([roleStatusFilter, roleSearch, pageSize], () => {
   currentPage.value = 1
@@ -73,13 +72,13 @@ watch(totalPages, total => {
   if (currentPage.value > total) currentPage.value = total
 })
 
-function startAddRole() { addingRole.value = true; newRoleName.value = ''; newRoleDesc.value = '' }
+function startAddRole() { addingRole.value = true; newRoleName.value = ''; newRoleDesc.value = ''; newRoleSector.value = '' }
 function cancelAddRole() { addingRole.value = false }
 async function confirmAddRole() {
   if (!canAddRole.value) return
   roleSaving.value = true
   try {
-    const r = await addRole(newRoleName.value, newRoleDesc.value)
+    const r = await addRole(newRoleName.value, newRoleDesc.value, newRoleSector.value)
     if (!r.ok) { error(r.error); return }
     success('Cargo adicionado.')
     addingRole.value = false
@@ -92,13 +91,14 @@ function startEditRole(r) {
   editingRoleId.value = r.id
   editRoleName.value = r.name
   editRoleDesc.value = r.description || ''
+  editRoleSector.value = r.sector || ''
 }
 function cancelEditRole() { editingRoleId.value = null }
 async function confirmEditRole() {
   if (!canEditRole.value) return
   roleSaving.value = true
   try {
-    const r = await editRole(editingRoleId.value, { name: editRoleName.value, description: editRoleDesc.value })
+    const r = await editRole(editingRoleId.value, { name: editRoleName.value, description: editRoleDesc.value, sector: editRoleSector.value })
     if (!r.ok) { error(r.error); return }
     await loadPeople()
     success('Cargo atualizado.')
@@ -161,8 +161,10 @@ async function deleteAllRolesDev() {
   }
 }
 
-function togglePageSelection() {
-  selectedRoleIds.value = allPageRolesSelected.value ? [] : pageRoleIds.value
+function toggleRoleSelection(roleId) {
+  selectedRoleIds.value = selectedRoleIds.value.includes(roleId)
+    ? selectedRoleIds.value.filter(id => id !== roleId)
+    : [...selectedRoleIds.value, roleId]
 }
 
 function normalizeSearch(value) {
@@ -176,7 +178,7 @@ function normalizeSearch(value) {
 
 <template>
   <div class="w-full">
-    <div class="mb-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">
+    <div class="ds-toolbar mb-4 justify-between">
       <div class="flex flex-wrap gap-2">
         <slot name="toolbar-start"></slot>
       </div>
@@ -203,6 +205,9 @@ function normalizeSearch(value) {
       </div>
     </div>
 
+    <datalist id="role-sectors">
+      <option v-for="sector in existingSectors" :key="sector" :value="sector" />
+    </datalist>
     <div v-if="addingRole" class="mb-4 flex flex-col gap-3 rounded-xl border border-primary-300 bg-primary-50/40 p-4 dark:border-primary-700 dark:bg-primary-900/10">
       <p class="text-xs font-semibold text-primary-600 dark:text-primary-400">Novo cargo</p>
       <input
@@ -220,6 +225,7 @@ function normalizeSearch(value) {
         @keydown.enter="confirmAddRole"
         @keydown.escape="cancelAddRole"
       />
+      <input v-model="newRoleSector" aria-label="Setor" placeholder="Setor (opcional)" class="ds-input" list="role-sectors" maxlength="100" @keydown.enter="confirmAddRole" @keydown.escape="cancelAddRole" />
       <p v-if="!newRoleName.trim()" class="text-xs text-amber-600 dark:text-amber-400">Informe o nome do cargo.</p>
       <div class="flex gap-2">
         <button
@@ -234,26 +240,33 @@ function normalizeSearch(value) {
       </div>
     </div>
 
-    <div class="mb-3 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+    <div class="ds-toolbar mb-3 flex-col !items-stretch">
       <div>
         <p class="text-xs font-semibold text-gray-700 dark:text-gray-200">Buscar e filtrar</p>
         <p class="text-xs text-gray-400 dark:text-gray-500">{{ filteredRoles.length }} de {{ roles.length }} cargos</p>
       </div>
-      <div class="grid gap-2 sm:grid-cols-[1fr_13rem_6rem]">
+      <div class="grid gap-2 sm:grid-cols-[1fr_auto_6rem]">
         <input
           v-model="roleSearch"
           type="search"
           placeholder="Buscar por cargo ou descrição..."
-          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-300 focus:border-primary-400 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-600"
+          class="ds-input"
         />
-        <select
-          v-model="roleStatusFilter"
-          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary-400 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-        >
-          <option v-for="option in roleStatusOptions" :key="option.id" :value="option.id">
-            {{ option.label }} ({{ option.count }})
-          </option>
-        </select>
+        <div class="flex min-h-10 flex-wrap items-center gap-1 rounded-lg border border-gray-300 bg-white p-1 dark:border-gray-600 dark:bg-gray-700">
+          <button
+            v-for="option in roleStatusOptions"
+            :key="option.id"
+            type="button"
+            class="rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors"
+            :class="roleStatusFilter === option.id
+              ? 'bg-primary-600 text-[var(--ds-primary-text)]'
+              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-gray-100'"
+            :aria-pressed="roleStatusFilter === option.id"
+            @click="roleStatusFilter = option.id"
+          >
+            {{ option.label }} <span class="tabular-nums opacity-70">({{ option.count }})</span>
+          </button>
+        </div>
         <select
           v-model.number="pageSize"
           class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary-400 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
@@ -265,12 +278,12 @@ function normalizeSearch(value) {
       </div>
     </div>
 
-    <div class="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+    <div class="ds-table-wrap overflow-hidden">
       <div v-if="selectedRoleIds.length" class="flex flex-col gap-2 border-b border-red-200 bg-red-50 px-4 py-3 text-xs dark:border-red-900/40 dark:bg-red-950/20 sm:flex-row sm:items-center sm:justify-between">
         <span class="font-semibold text-red-700 dark:text-red-300">{{ selectedRoleIds.length }} cargo(s) selecionado(s)</span>
         <button
           type="button"
-          class="inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex items-center justify-center rounded-lg bg-[var(--ds-danger-solid)] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--ds-danger-hover)] disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="bulkDeleting"
           @click="deleteSelectedRoles"
         >
@@ -278,22 +291,14 @@ function normalizeSearch(value) {
         </button>
       </div>
 
-      <table v-if="filteredRoles.length" class="w-full text-sm">
+      <table v-if="filteredRoles.length" class="ds-table">
         <thead>
           <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
-            <th class="w-10 px-3 py-2.5 text-center">
-              <input
-                type="checkbox"
-                class="ds-table-checkbox"
-                :checked="allPageRolesSelected"
-                title="Selecionar cargos desta pagina"
-                @change="togglePageSelection"
-              />
-            </th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Cargo</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Setor</th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Descrição</th>
             <th class="w-24 px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</th>
-            <th class="w-20 px-4 py-2.5"></th>
+            <th class="w-32 px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Ações</th>
           </tr>
         </thead>
         <tbody>
@@ -301,20 +306,17 @@ function normalizeSearch(value) {
             v-for="r in paginatedRoles"
             :key="r.id"
             class="border-b border-gray-100 transition-colors hover:bg-gray-50 dark:border-gray-700/50 dark:hover:bg-gray-700/30"
-            :class="{ 'opacity-50': !r.active }"
+            :class="{
+              'opacity-50': !r.active,
+              'bg-primary-50/50 dark:bg-primary-900/10': selectedRoleIds.includes(r.id),
+            }"
           >
-            <td class="w-10 px-3 py-3 text-center">
-              <input
-                v-model="selectedRoleIds"
-                type="checkbox"
-                class="ds-table-checkbox"
-                :value="r.id"
-                :aria-label="`Selecionar ${r.name}`"
-              />
-            </td>
             <template v-if="editingRoleId === r.id">
               <td class="px-4 py-2">
                 <input v-model="editRoleName" class="w-full rounded border border-primary-400 bg-white px-2 py-1 text-sm text-gray-800 focus:outline-none dark:border-primary-500 dark:bg-gray-700 dark:text-gray-100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" autofocus />
+              </td>
+              <td class="px-4 py-2">
+                <input v-model="editRoleSector" aria-label="Setor" placeholder="Setor (opcional)" class="ds-input" list="role-sectors" maxlength="100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" />
               </td>
               <td class="px-4 py-2">
                 <input v-model="editRoleDesc" placeholder="Descrição..." class="w-full rounded border border-primary-400 bg-white px-2 py-1 text-sm text-gray-800 focus:outline-none dark:border-primary-500 dark:bg-gray-700 dark:text-gray-100" @keydown.enter="confirmEditRole" @keydown.escape="cancelEditRole" />
@@ -331,7 +333,10 @@ function normalizeSearch(value) {
               </td>
             </template>
             <template v-else>
-              <td class="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">{{ r.name }}</td>
+              <td class="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">
+                {{ r.name }}
+              </td>
+              <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ r.sector || '—' }}</td>
               <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ r.description || '—' }}</td>
               <td class="px-4 py-3 text-center">
                 <button
@@ -344,6 +349,22 @@ function normalizeSearch(value) {
               </td>
               <td class="px-4 py-3">
                 <div class="flex items-center justify-center gap-0.5">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 px-2 text-xs font-semibold transition-colors"
+                    :class="selectedRoleIds.includes(r.id)
+                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-200'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-primary-700 dark:hover:bg-gray-700 dark:hover:text-primary-300'"
+                    :aria-label="`${selectedRoleIds.includes(r.id) ? 'Remover' : 'Selecionar'} ${r.name}`"
+                    :aria-pressed="selectedRoleIds.includes(r.id)"
+                    :title="selectedRoleIds.includes(r.id) ? 'Remover da seleção' : 'Selecionar cargo'"
+                    @click="toggleRoleSelection(r.id)"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="9" />
+                      <path v-if="selectedRoleIds.includes(r.id)" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.25 2.25L15.5 9.5" />
+                    </svg>
+                  </button>
                   <button class="p-1 text-gray-400 transition-colors hover:text-amber-500 dark:hover:text-amber-400" title="Editar" @click="startEditRole(r)">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
                   </button>

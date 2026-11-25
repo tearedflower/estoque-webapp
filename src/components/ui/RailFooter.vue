@@ -6,9 +6,11 @@ defineProps({
   isLoggedIn: { type: Boolean, default: false },
   userName: { type: String, default: '' },
   isDark: { type: Boolean, default: false },
+  canChangeVisualStyle: { type: Boolean, default: false },
+  visualStyleName: { type: String, default: '' },
 })
 
-const emit = defineEmits(['login', 'change-password', 'logout', 'toggle-theme'])
+const emit = defineEmits(['login', 'change-password', 'logout', 'toggle-theme', 'toggle-visual-style'])
 const accountOpen = ref(false)
 const root = ref(null)
 
@@ -28,22 +30,23 @@ onUnmounted(() => window.removeEventListener('pointerdown', closeOutside))
 </script>
 
 <template>
-  <div class="ds-rail-footer">
+  <div class="ds-account-controls">
     <div v-if="isLoggedIn" ref="root" class="relative min-w-0 flex-1" @keydown.esc.stop="accountOpen = false">
       <AppButton
         variant="ghost"
         size="sm"
-        class="w-full !justify-start"
+        class="w-full !justify-start max-sm:!w-9 max-sm:!min-w-9 max-sm:!p-0 max-sm:!justify-center"
         title="Conta"
+        :aria-label="`Conta: ${userName}`"
         :aria-expanded="accountOpen"
         @click="accountOpen = !accountOpen"
       >
         <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0" />
         </svg>
-        <span class="truncate">{{ userName }}</span>
+        <span class="hidden max-w-28 truncate sm:inline">{{ userName }}</span>
       </AppButton>
-      <div v-if="accountOpen" class="ds-menu absolute bottom-full left-0 mb-2 w-44 p-1">
+      <div v-if="accountOpen" class="ds-menu ds-pop absolute top-full right-0 mt-2 w-44 p-1">
         <button type="button" class="ds-menu-item text-sm" @click="run('change-password')">Trocar senha</button>
         <button type="button" class="ds-menu-item ds-menu-item-danger text-sm" @click="run('logout')">Sair</button>
       </div>
@@ -60,6 +63,17 @@ onUnmounted(() => window.removeEventListener('pointerdown', closeOutside))
         <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0-2.25 2.25Z" />
       </svg>
       <span>Entrar</span>
+    </AppButton>
+    <AppButton
+      v-if="canChangeVisualStyle"
+      variant="ghost"
+      size="icon"
+      class="!h-9 !w-9 !min-w-9 max-sm:!hidden"
+      :title="`Alternar aparência (${visualStyleName})`"
+      aria-label="Alternar aparência"
+      @click="$emit('toggle-visual-style')"
+    >
+      <span class="text-[10px] font-bold leading-none">98</span>
     </AppButton>
     <AppButton
       variant="ghost"

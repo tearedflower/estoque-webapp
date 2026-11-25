@@ -11,6 +11,8 @@ import AppDialog from '../ui/AppDialog.vue'
 const {
   addDestination,
   editDestination,
+  reorderDestinations,
+  sortDestinationsAlphabetically,
   toggleDestinationActive,
   deleteDestination,
   destinations,
@@ -42,6 +44,8 @@ const moveDestParentId = ref('')
 const contextMenu = ref(null)
 const contextMenuRef = ref(null)
 const contextMenuFirstRef = ref(null)
+const draggedDestinationIndex = ref(null)
+const dragTargetDestinationIndex = ref(null)
 let contextMenuTarget = null
 
 const addingMaterial = ref(false)
@@ -144,6 +148,31 @@ function selectParent(id) {
 function selectDestination(destination) {
   selectParent(destination.id)
   mobileDetailOpen.value = true
+}
+
+function startDestinationDrag(index, event) {
+  if (destinationSearch.value) return
+  draggedDestinationIndex.value = index
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+function overDestination(index, event) {
+  if (draggedDestinationIndex.value === null) return
+  event.preventDefault()
+  dragTargetDestinationIndex.value = index
+}
+
+async function dropDestination(index, event) {
+  event.preventDefault()
+  const from = draggedDestinationIndex.value
+  clearDestinationDrag()
+  if (from === null || from === index) return
+  await reorderDestinations(from, index)
+}
+
+function clearDestinationDrag() {
+  draggedDestinationIndex.value = null
+  dragTargetDestinationIndex.value = null
 }
 
 function startAddDest(parentId = null) {
@@ -789,13 +818,24 @@ async function removeMaterialFromDestination(variation) {
       :class="mobileDetailOpen ? 'hidden md:flex' : 'flex'"
     >
       <div class="px-3 pt-2.5 pb-2 border-b border-gray-200 dark:border-gray-700 flex flex-col gap-2">
-        <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Destinos</p>
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Destinos</p>
+          <button
+            v-if="topLevelDestinations.length && !destinationSearch"
+            type="button"
+            class="ds-chip cursor-pointer hover:border-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+            title="Organizar destinos em ordem alfabética"
+            @click="sortDestinationsAlphabetically"
+          >
+            A-Z
+          </button>
+        </div>
         <div class="relative">
-          <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-300 dark:text-gray-600 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" /></svg>
+          <svg class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ds-text-subtle)]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" /></svg>
           <input
             v-model="destinationSearch"
             placeholder="Filtrar..."
-            class="min-h-10 w-full pl-6 pr-2 py-1 text-xs rounded-md bg-gray-100 dark:bg-gray-700/60 border border-transparent focus:border-gray-300 dark:focus:border-gray-600 text-gray-600 dark:text-gray-300 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none transition-colors"
+            class="ds-input !min-h-10 !pl-9 !pr-3 !text-xs"
           />
         </div>
       </div>
@@ -810,17 +850,31 @@ async function removeMaterialFromDestination(variation) {
         </div>
 
         <button
-          v-for="destination in filteredDestinationList"
+          v-for="(destination, destinationIndex) in filteredDestinationList"
           :key="destination.id"
           type="button"
+          :draggable="!destinationSearch"
           class="group/row min-h-11 w-[calc(100%-0.5rem)] flex items-center gap-1.5 px-2 py-1.5 mx-1 my-0.5 rounded-lg cursor-pointer transition-colors text-left md:min-h-0"
-          :class="selectedMaterialDestId === destination.id
-            ? 'bg-primary-600 dark:bg-primary-700 text-[var(--ds-primary-text)]'
-            : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'"
+          :class="[
+            selectedMaterialDestId === destination.id
+              ? 'bg-primary-600 dark:bg-primary-700 text-[var(--ds-primary-text)]'
+              : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200',
+            draggedDestinationIndex === destinationIndex ? 'opacity-40' : '',
+            dragTargetDestinationIndex === destinationIndex ? 'ring-2 ring-inset ring-primary-500' : '',
+          ]"
           :title="getDestFullName(destination.id)"
+          @dragstart.stop="startDestinationDrag(destinationIndex, $event)"
+          @dragover.stop="overDestination(destinationIndex, $event)"
+          @drop.stop="dropDestination(destinationIndex, $event)"
+          @dragend.stop="clearDestinationDrag"
           @click="selectDestination(destination)"
           @contextmenu="openContextMenu($event, destination)"
         >
+          <svg v-if="!destinationSearch" class="h-3 w-3 flex-shrink-0 cursor-grab text-current opacity-0 group-hover/row:opacity-40 active:cursor-grabbing" viewBox="0 0 20 20" fill="currentColor">
+            <circle cx="7" cy="5" r="1.2"/><circle cx="13" cy="5" r="1.2"/>
+            <circle cx="7" cy="10" r="1.2"/><circle cx="13" cy="10" r="1.2"/>
+            <circle cx="7" cy="15" r="1.2"/><circle cx="13" cy="15" r="1.2"/>
+          </svg>
           <svg class="w-4 h-4 flex-shrink-0 opacity-70" :class="destination.parentId ? 'ml-2' : ''" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
             <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
@@ -857,7 +911,7 @@ async function removeMaterialFromDestination(variation) {
         </div>
         <button
           v-else
-          class="flex min-h-10 w-full items-center justify-center gap-1.5 px-2 py-1.5 text-xs text-gray-400 dark:text-gray-500 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-gray-700/60 rounded-md transition-colors md:min-h-0"
+          class="flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md bg-primary-600 px-3 text-xs font-semibold text-[var(--ds-primary-text)] transition-colors duration-100 hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800 md:h-9 md:min-h-0"
           @click="startAddDest(null)"
         >
           <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -1012,7 +1066,7 @@ async function removeMaterialFromDestination(variation) {
               <div
                 v-for="child in visibleChildren"
                 :key="child.id"
-                class="group/card relative rounded-xl border bg-gray-50 dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all"
+                class="group/card relative rounded-xl border bg-gray-50 dark:bg-gray-800 hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100"
                 :class="[
                   selectedMaterialDestId === child.id ? 'border-primary-500 dark:border-primary-500 ring-1 ring-primary-500/30' : 'border-gray-200 dark:border-gray-700',
                   !child.active ? 'opacity-60' : ''
@@ -1168,7 +1222,7 @@ async function removeMaterialFromDestination(variation) {
                 </div>
                 <div class="text-right flex-shrink-0">
                   <p class="text-xs text-gray-400 dark:text-gray-500">Min.</p>
-                  <p class="text-sm font-semibold tabular-nums text-gray-800 dark:text-gray-100">{{ variation.minStock || 0 }}</p>
+                  <p class="text-sm font-semibold tabular-nums text-gray-800 dark:text-gray-100">{{ variation.minStock ?? '—' }}</p>
                 </div>
                 <button
                   v-if="isLoggedIn && isManualMaterialLinked(variation)"
@@ -1379,7 +1433,7 @@ async function removeMaterialFromDestination(variation) {
               v-for="group in materialGroups"
               :key="group"
               type="button"
-              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all"
+              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100"
               @click="selectMaterialGroup(group)"
             >
               <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{{ group }}</p>
@@ -1394,7 +1448,7 @@ async function removeMaterialFromDestination(variation) {
               v-for="category in materialCategories"
               :key="category"
               type="button"
-              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all"
+              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100"
               @click="selectMaterialCategory(category)"
             >
               <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{{ category }}</p>
@@ -1409,7 +1463,7 @@ async function removeMaterialFromDestination(variation) {
               v-for="subcategory in materialSubcategories"
               :key="subcategory"
               type="button"
-              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all"
+              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100"
               @click="selectMaterialSubcategory(subcategory)"
             >
               <p class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{{ subcategory }}</p>
@@ -1424,7 +1478,7 @@ async function removeMaterialFromDestination(variation) {
               v-for="item in materialItems"
               :key="item.id"
               type="button"
-              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-all"
+              class="group/block relative rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4 text-left hover:border-primary-400 dark:hover:border-primary-600 hover:shadow-sm transition-colors duration-100"
               @click="selectMaterialItem(item.id)"
             >
               <p class="text-sm font-bold text-gray-800 dark:text-gray-100 line-clamp-2">{{ item.name }}</p>
@@ -1462,7 +1516,7 @@ async function removeMaterialFromDestination(variation) {
                   Estoque {{ variation.stock }}
                 </span>
                 <span
-                  v-if="variation.minStock"
+                  v-if="variation.minStock !== null && variation.minStock !== undefined"
                   class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
                 >
                   Min. {{ variation.minStock }}

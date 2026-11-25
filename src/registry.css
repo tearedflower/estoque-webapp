@@ -1,0 +1,48 @@
+/* Padrões compartilhados pelos cadastros, em todos os temas. */
+@layer components {
+  .registry-page { min-width: 0; }
+  .registry-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+  .registry-page .ds-toolbar { justify-content: flex-start; gap: 12px; }
+  .registry-status-filter { max-width: 180px; }
+  .registry-count { margin-left: auto; white-space: nowrap; font-size: 12px; }
+  .registry-page .ds-toolbar > button { min-height: 40px; padding: 10px 14px; justify-content: center; }
+  .registry-table { width: 100%; min-width: 600px; table-layout: fixed; }
+  .registry-table th { padding: 12px 16px; text-align: left; }
+  .registry-table td { padding: 14px 16px; overflow-wrap: anywhere; vertical-align: middle; }
+  .registry-table th:nth-last-child(-n+2) { width: 120px; text-align: center; }
+  .registry-table td:last-child { text-align: center; }
+  .registry-table td input { min-height: 40px; }
+  .registry-table td button:not([title]) { min-height: 32px; padding: 6px 10px; }
+  .registry-locations-header { display: grid; grid-template-columns: minmax(0, 1fr) 80px 124px; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--ds-border); background: var(--ds-table-head); color: var(--ds-text-muted); font-size: 12px; font-weight: 600; }
+  .registry-locations-header > :not(:first-child) { text-align: center; }
+  .registry-location-row { display: grid; grid-template-columns: 24px 20px minmax(0, 1fr) 80px repeat(3, 36px); gap: 8px; min-height: 76px; }
+  .registry-location-row > button { min-width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--ds-radius-control); }
+  .registry-location-row > button[title]:hover { background: var(--ds-surface-strong); }
+  .registry-location-child { grid-template-columns: 24px minmax(0, 1fr) 80px repeat(2, 36px); padding-left: 68px; border-left: 3px solid var(--ds-border); }
+  .registry-location-row:has(input) { display: flex; flex-wrap: wrap; }
+  .registry-location-row input { min-width: 120px; }
+  @media (max-width: 640px) {
+    .registry-page .ds-toolbar { align-items: stretch; }
+    .registry-page .ds-toolbar > input { flex: 1 1 100%; }
+    .registry-page .ds-toolbar > button { margin-left: auto; }
+    .registry-count { margin-left: 0; align-self: center; }
+    .registry-status-filter { max-width: 160px; }
+    .registry-table, .registry-table tbody { display: block; width: 100%; min-width: 0; }
+    .registry-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .registry-table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--ds-border); }
+    .registry-table td { display: block; text-align: left; padding: 10px 12px; border: 0; }
+    .registry-table td:first-child, .registry-table td:has(input), .registry-table td[colspan] { grid-column: 1 / -1; }
+    .registry-table td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--ds-text-muted); font-size: 11px; font-weight: 400; }
+    .registry-table td[data-label="Ações"] { grid-column: 2; grid-row: 3; }
+    .registry-table td[data-label="Status"] { grid-column: 1; grid-row: 3; }
+    .registry-locations-header { display: none; }
+    .registry-location-row { grid-template-columns: 24px minmax(0, 1fr) repeat(3, 36px); padding: 12px; }
+    .registry-location-row > svg { display: none; }
+    .registry-location-row > div { grid-column: 2 / -1; grid-row: 1; }
+    .registry-location-row > .registry-location-status { grid-column: 2; grid-row: 2; justify-self: start; }
+    .registry-location-row > button[title] { grid-row: 2; }
+    .registry-location-child { margin-left: 24px; padding-left: 12px; }
+    .registry-location-child > div { grid-column: 1 / -1; }
+    .registry-location-child > .registry-location-status { grid-column: 1 / 3; }
+  }
+}

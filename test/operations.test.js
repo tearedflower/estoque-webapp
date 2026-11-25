@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import os from 'node:os'
+import Database from 'better-sqlite3'
 import { devProcesses } from '../server/scripts/dev.js'
 import { assertResetAllowed, isProductionEnv, seedMutationAllowed, PROD_RESET_CONFIRMATION } from '../server/utils/maintenanceGuard.js'
 import { isOwnPasswordChangeRequest, passwordChangeError } from '../server/utils/authPolicy.js'
-import { startBackupScheduler } from '../server/backup.js'
+import { createBackup, startBackupScheduler, verifyBackup } from '../server/backup.js'
 import { backupCountdownLabel } from '../src/utils/backupStatus.js'
 
 test('backup scheduler exposes the next automatic run', () => {
@@ -31,6 +35,27 @@ test('backup countdown uses a stable tabular time label', () => {
   assert.equal(backupCountdownLabel({ status: 'ok', nextRunAt: '2026-07-14T13:02:03.000Z' }, now), '1d 01:02:03')
   assert.equal(backupCountdownLabel({ status: 'running' }, now), 'Backup em andamento')
   assert.equal(backupCountdownLabel({ status: 'disabled' }, now), 'Backups desativados')
+})
+
+test('backup passes an integrity restore drill and mirrors to another configured directory', async t => {
+  const root = await mkdtemp(join(os.tmpdir(), 'estoque-backup-'))
+  const sourcePath = join(root, 'source.db')
+  const backupDir = join(root, 'backups')
+  const mirrorDir = join(root, 'mirror')
+  const db = new Database(sourcePath)
+  db.exec("CREATE TABLE marker (value TEXT); INSERT INTO marker VALUES ('preservado')")
+  t.after(async () => {
+    db.close()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  const path = await createBackup(db, { dir: backupDir, mirrorDir, keepHourly: 2, keepDaily: 2, keepMonthly: 2 })
+  assert.equal(verifyBackup(path), true)
+  const mirrored = (await readdir(mirrorDir)).filter(name => name.endsWith('.db'))
+  assert.equal(mirrored.length, 1)
+  const mirrorDb = new Database(join(mirrorDir, mirrored[0]), { readonly: true })
+  assert.equal(mirrorDb.prepare('SELECT value FROM marker').pluck().get(), 'preservado')
+  mirrorDb.close()
 })
 
 test('dev starts API watch and Vite together', () => {

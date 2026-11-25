@@ -30,7 +30,7 @@ onUnmounted(() => dialogRef.value?.close())
   <Teleport to="body">
     <dialog
       ref="dialogRef"
-      class="fixed inset-0 z-50 m-0 h-[100dvh] w-screen max-w-none bg-transparent p-0 backdrop:bg-black/55"
+      class="fixed inset-0 z-50 m-0 h-[100dvh] w-screen max-w-none bg-transparent p-0 backdrop:bg-[var(--ds-overlay)]"
       aria-modal="true"
       :aria-label="ariaLabel"
       @cancel.prevent="requestClose"
@@ -45,3 +45,33 @@ onUnmounted(() => dialogRef.value?.close())
     </dialog>
   </Teleport>
 </template>
+
+<style scoped>
+/* Entrada suave do diálogo e do backdrop (saída instantânea) */
+dialog[open] {
+  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  @starting-style {
+    opacity: 0;
+  }
+}
+dialog[open]::backdrop {
+  transition: opacity 160ms ease;
+  @starting-style {
+    opacity: 0;
+  }
+}
+dialog[open] > div {
+  transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1), transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog[open],
+  dialog[open]::backdrop,
+  dialog[open] > div {
+    transition: none;
+  }
+}
+</style>

@@ -1,7 +1,14 @@
 import { computed, ref, watch } from 'vue'
 import * as api from '../services/api.js'
 
-const safeStyle = style => /^[a-z0-9][a-z0-9_-]*$/i.test(style || '') ? style.toLowerCase() : 'industrial'
+export function canUseLocalVisualStyles() {
+  return typeof window !== 'undefined' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname)
+}
+
+const safeStyle = style => {
+  const selected = /^[a-z0-9][a-z0-9_-]*$/i.test(style || '') ? style.toLowerCase() : 'industrial'
+  return selected === 'windows98' && !canUseLocalVisualStyles() ? 'industrial' : selected
+}
 
 function storedIsDark() {
   const saved = localStorage.getItem('theme')
@@ -43,9 +50,10 @@ export function useTheme() {
     try {
       const found = await api.getThemes()
       if (!Array.isArray(found) || !found.length) return
-      styles.value = found
-      if (found.some(style => style.id === visualStyle.value)) return
-      visualStyle.value = found.find(style => style.id === 'industrial')?.id || found[0].id
+      const available = canUseLocalVisualStyles() ? found : found.filter(style => style.id !== 'windows98')
+      styles.value = available
+      if (available.some(style => style.id === visualStyle.value)) return
+      visualStyle.value = available.find(style => style.id === 'industrial')?.id || available[0].id
       localStorage.setItem('visual-style', visualStyle.value)
       applyTheme()
     } catch {}

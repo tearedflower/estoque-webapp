@@ -39,14 +39,14 @@ export function useEpis() {
   const activeRoleRules = computed(() => sortRules(roleRules.value.filter(r => r.active)))
   const activePeriodicities = computed(() => sortPeriods(periodicities.value.filter(p => p.active)))
 
-  async function addRoleRule(roleName, target, days = 30, quantity = 1) {
+  async function addRoleRule(roleName, target, days = 30, quantity = 1, options = {}) {
     const cleanRole = String(roleName || '').trim()
     const cleanTarget = normalizeTarget(target)
     const cleanDays = Number(days)
     const cleanQuantity = Number(quantity)
     if (!cleanRole) return { ok: false, error: 'Cargo obrigatorio.' }
     if (!cleanTarget.targetType || !cleanTarget.targetKey) return { ok: false, error: 'EPI obrigatorio.' }
-    if (!Number.isInteger(cleanDays) || cleanDays <= 0) return { ok: false, error: 'Periodicidade invalida.' }
+    if (!Number.isInteger(cleanDays) || cleanDays < 0) return { ok: false, error: 'Periodicidade invalida.' }
     if (!Number.isInteger(cleanQuantity) || cleanQuantity <= 0) return { ok: false, error: 'Quantidade invalida.' }
     if (roleRules.value.some(r =>
       r.roleName.toLowerCase() === cleanRole.toLowerCase() &&
@@ -55,7 +55,7 @@ export function useEpis() {
     )) return { ok: false, error: 'Este EPI ja esta vinculado ao cargo.' }
 
     try {
-      const created = await api.createEpiRoleRule({ roleName: cleanRole, ...cleanTarget, days: cleanDays, quantity: cleanQuantity, active: true })
+      const created = await api.createEpiRoleRule({ roleName: cleanRole, ...cleanTarget, days: cleanDays, quantity: cleanQuantity, active: true, ...options })
       roleRules.value = sortRules([...roleRules.value, created])
       return { ok: true, rule: created }
     } catch (cause) {
@@ -66,15 +66,30 @@ export function useEpis() {
   async function editRoleRule(id, changes) {
     const current = roleRules.value.find(r => r.id === id)
     if (!current) return { ok: false, error: 'Regra nao encontrada.' }
-    const updated = await api.updateEpiRoleRule(id, { ...current, ...changes })
-    Object.assign(current, updated)
-    roleRules.value = sortRules(roleRules.value)
-    return { ok: true, rule: updated }
+    try {
+      const updated = await api.updateEpiRoleRule(id, changes)
+      Object.assign(current, updated)
+      roleRules.value = sortRules(roleRules.value)
+      return { ok: true, rule: updated }
+    } catch (cause) {
+      return { ok: false, error: cause.message || 'Não foi possível atualizar o EPI.' }
+    }
   }
 
   async function deleteRoleRule(id) {
     await api.deleteEpiRoleRule(id)
     roleRules.value = roleRules.value.filter(r => r.id !== id)
+  }
+
+  async function editRoleBatch(changes, { useItem = false, allowedCas } = {}) {
+    try {
+      const updated = await (useItem ? api.convertEpiRolesToItems(changes, allowedCas) : api.updateEpiRoleBatch(changes))
+      const byId = new Map(updated.map(rule => [rule.id, rule]))
+      roleRules.value = sortRules(roleRules.value.map(rule => byId.get(rule.id) || rule))
+      return { ok: true }
+    } catch (cause) {
+      return { ok: false, error: cause.message || 'Não foi possível atualizar os vínculos.' }
+    }
   }
 
   async function addPeriodicity(target, days) {
@@ -113,6 +128,7 @@ export function useEpis() {
     loadData,
     addRoleRule,
     editRoleRule,
+    editRoleBatch,
     deleteRoleRule,
     addPeriodicity,
     editPeriodicity,
